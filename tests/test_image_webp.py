@@ -1,4 +1,6 @@
 from pathlib import Path
+from threading import Lock
+from time import sleep
 from typing import cast
 
 import av
@@ -7,6 +9,11 @@ import pytest
 from av.video.stream import VideoStream
 
 from cleanup_cli import convert_directory_to_webp
+from cleanup_cli.models.image_webp import (
+    DecodedImage,
+    WebPCodec,
+    WebPDirectoryConverter,
+)
 
 
 def _write_ppm(path: Path, size: tuple[int, int] = (128, 96)) -> None:
@@ -98,3 +105,49 @@ def test_does_not_overwrite_an_existing_destination(tmp_path: Path) -> None:
 def test_rejects_invalid_quality(tmp_path: Path, quality: int) -> None:
     with pytest.raises(ValueError, match="between 0 and 100"):
         convert_directory_to_webp(tmp_path, quality=quality)
+
+
+def test_converts_files_in_parallel_and_preserves_scan_order(tmp_path: Path) -> None:
+    active = 0
+    maximum_active = 0
+    lock = Lock()
+
+    class Scanner:
+        def __init__(self, paths: list[Path]) -> None:
+            self._paths = paths
+
+        def scan(self, directory: Path) -> list[Path]:
+            return self._paths
+
+    class TrackingCodec(WebPCodec[Path]):
+        def decode(self, path: Path) -> DecodedImage[Path]:
+            return DecodedImage(path, (1, 1), False, False)
+
+        def encode(self, frame: Path, destination: Path, quality: int) -> None:
+            nonlocal active, maximum_active
+            with lock:
+                active += 1
+                maximum_active = max(maximum_active, active)
+            sleep(0.03)
+            destination.write_bytes(b"x")
+            with lock:
+                active -= 1
+
+        def dimensions(self, path: Path) -> tuple[int, int]:
+            return (1, 1)
+
+    sources = []
+    for index in range(4):
+        source = tmp_path / f"image-{index}.jpg"
+        source.write_bytes(b"x" * 100)
+        sources.append(source)
+
+    converter = WebPDirectoryConverter(
+        TrackingCodec(), scanner=Scanner(sources), max_workers=4
+    )
+
+    conversions, skips = converter.convert(tmp_path)
+
+    assert maximum_active > 1
+    assert [conversion.source for conversion in conversions] == sources
+    assert skips == []

@@ -5,8 +5,10 @@ from __future__ import annotations
 import os
 import tempfile
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
 from typing import Generic, TypeVar, cast
 
 import av
@@ -131,34 +133,54 @@ class WebPDirectoryConverter(Generic[FrameT]):
         codec: WebPCodec[FrameT],
         *,
         scanner: DirectoryScanner | None = None,
+        max_workers: int | None = None,
     ) -> None:
         self._codec = codec
         self._scanner = scanner or RecursiveDirectoryScanner()
+        self._max_workers = max_workers
+        # Two source files can have the same destination (for example, foo.jpg
+        # and foo.png).  Keep the final check-and-replace operation atomic from
+        # the converter's point of view so workers never overwrite each other.
+        self._destination_lock = Lock()
 
     def convert(
         self,
         directory: Path,
         *,
         quality: int = 80,
+        max_workers: int | None = None,
     ) -> tuple[list[WebPConversion], list[WebPSkip]]:
         options = WebPOptions(quality)
 
         conversions: list[WebPConversion] = []
         skips: list[WebPSkip] = []
 
-        for path in self._scanner.scan(directory):
-            try:
-                result = self._convert_file(path, options)
-            except (FFmpegError, OSError, StopIteration, ValueError):
-                # Directory scans commonly include non-images and unsupported files.
-                continue
-
-            if isinstance(result, WebPConversion):
-                conversions.append(result)
-            elif result is not None:
-                skips.append(result)
+        paths = list(self._scanner.scan(directory))
+        workers = self._max_workers if max_workers is None else max_workers
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            results = executor.map(
+                lambda path: self._convert_file_safely(path, options), paths
+            )
+            for result in results:
+                if isinstance(result, WebPConversion):
+                    conversions.append(result)
+                elif result is not None:
+                    skips.append(result)
 
         return conversions, skips
+
+    def _convert_file_safely(
+        self,
+        path: Path,
+        options: WebPOptions,
+    ) -> WebPConversion | WebPSkip | None:
+        try:
+            result = self._convert_file(path, options)
+        except (FFmpegError, OSError, StopIteration, ValueError):
+            # Directory scans commonly include non-images and unsupported files.
+            return None
+
+        return result
 
     def _convert_file(
         self,
@@ -186,8 +208,11 @@ class WebPDirectoryConverter(Generic[FrameT]):
             if webp_size >= original_size:
                 return WebPSkip(path, "WebP would not be smaller")
 
-            os.replace(temporary, destination)
-            path.unlink()
+            with self._destination_lock:
+                if destination.exists():
+                    return WebPSkip(path, f"destination exists: {destination}")
+                os.replace(temporary, destination)
+                path.unlink()
             return WebPConversion(path, destination, original_size, webp_size)
         finally:
             temporary.unlink(missing_ok=True)
@@ -204,7 +229,7 @@ def _temporary_webp_path(source: Path) -> Path:
 
 
 def convert_directory_to_webp(
-    directory: str | Path, *, quality: int = 80
+    directory: str | Path, *, quality: int = 80, max_workers: int | None = None
 ) -> tuple[list[WebPConversion], list[WebPSkip]]:
     """Recursively replace images with smaller, equally sized WebP files.
 
@@ -213,5 +238,5 @@ def convert_directory_to_webp(
     use fewer bytes. Existing destination paths are never overwritten.
     """
 
-    converter = WebPDirectoryConverter(PyAVWebPCodec())
+    converter = WebPDirectoryConverter(PyAVWebPCodec(), max_workers=max_workers)
     return converter.convert(Path(directory), quality=quality)
