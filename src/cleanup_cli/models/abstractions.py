@@ -159,7 +159,7 @@ class RecursiveDirectoryIndexer(DirectoryIndexer[ValueT]):
 
     def index(self, directory: Path) -> list[IndexedFile[ValueT]]:
         indexed: list[IndexedFile[ValueT]] = []
-        for path in tqdm.tqdm(self._scanner.scan(directory), desc=f"indexing {directory}", unit="file"):
+        for path in tqdm.tqdm(list(self._scanner.scan(directory)), desc=f"indexing {directory}", unit="file"):
             try:
                 identity = file_identity(path)
                 value = self._analyzer.analyze(path)
