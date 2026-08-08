@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import os
 from pathlib import Path
+import tempfile
 from typing import Generic, Protocol, TypeVar
 
 from .path_sort import sort_numbered_paths
@@ -14,6 +16,50 @@ from .path_sort import sort_numbered_paths
 ValueT = TypeVar("ValueT")
 AnalyzedValueT = TypeVar("AnalyzedValueT", covariant=True)
 MeasuredValueT = TypeVar("MeasuredValueT", contravariant=True)
+
+
+@dataclass(frozen=True)
+class FileIdentity:
+    """Metadata identifying the directory entry that was analyzed."""
+
+    device: int
+    inode: int
+    size: int
+    modified_ns: int
+
+
+def file_identity(path: Path) -> FileIdentity:
+    """Return identity metadata used to reject stale destructive actions."""
+
+    stat = path.stat()
+    return FileIdentity(stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+
+
+def quarantine_if_unchanged(path: Path, expected: FileIdentity) -> Path:
+    """Atomically move *path* aside and verify it is the analyzed file.
+
+    Moving before checking closes the check/unlink race: even if a writer
+    replaces the pathname at the worst moment, its data is retained either at
+    the original name or at the returned quarantine path.
+    """
+
+    quarantine_directory = Path(
+        tempfile.mkdtemp(dir=path.parent, prefix=f".{path.name}-quarantine-")
+    )
+    quarantine = quarantine_directory / path.name
+    os.rename(path, quarantine)
+    if file_identity(quarantine) == expected:
+        return quarantine
+
+    try:
+        os.link(quarantine, path, follow_symlinks=False)
+    except FileExistsError:
+        raise OSError(
+            f"file changed and was preserved at recovery path: {quarantine}"
+        )
+    quarantine.unlink()
+    quarantine_directory.rmdir()
+    raise OSError(f"file changed since it was analyzed: {path}")
 
 
 class FileAnalyzer(Protocol[AnalyzedValueT]):
@@ -54,6 +100,7 @@ class IndexedFile(Generic[ValueT]):
 
     path: Path
     value: ValueT
+    identity: FileIdentity | None = field(default=None, compare=False)
 
 
 class DirectoryIndexer(ABC, Generic[ValueT]):
@@ -81,7 +128,11 @@ class RecursiveDirectoryScanner:
         if not directory.is_dir():
             raise NotADirectoryError(directory)
 
-        files = (path for path in directory.rglob("*") if path.is_file())
+        files = (
+            path
+            for path in directory.rglob("*")
+            if path.is_file() and not path.is_symlink()
+        )
         yield from self._orderer.order(files)
 
 
@@ -106,7 +157,14 @@ class RecursiveDirectoryIndexer(DirectoryIndexer[ValueT]):
         indexed: list[IndexedFile[ValueT]] = []
         for path in self._scanner.scan(directory):
             try:
-                indexed.append(IndexedFile(path, self._analyzer.analyze(path)))
+                identity = file_identity(path)
+                value = self._analyzer.analyze(path)
+                # Never retain an analysis of a file that changed while being
+                # read; a later destructive operation must target this exact
+                # snapshot rather than merely the same pathname.
+                if file_identity(path) != identity:
+                    continue
+                indexed.append(IndexedFile(path, value, identity))
             except self._ignored_errors:
                 continue
         return indexed

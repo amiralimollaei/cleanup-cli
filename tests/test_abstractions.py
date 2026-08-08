@@ -15,6 +15,8 @@ from cleanup_cli import (
     WebPOptions,
 )
 from cleanup_cli.models.image_duplicates import Duplicate
+from cleanup_cli.models.abstractions import file_identity
+from cleanup_cli.models.image_duplicates import FileChangedError, LocalFileRemover
 
 
 class TextLengthAnalyzer:
@@ -128,6 +130,19 @@ def test_deduplicator_coordinates_abstract_indexer_detector_and_remover() -> Non
     assert remover.removed == [first.path]
 
 
+def test_local_remover_refuses_to_delete_a_replaced_file(tmp_path: Path) -> None:
+    path = tmp_path / "duplicate.jpg"
+    path.write_bytes(b"analyzed")
+    expected = file_identity(path)
+    path.unlink()
+    path.write_bytes(b"new user data")
+
+    with pytest.raises(FileChangedError, match="changed"):
+        LocalFileRemover().remove(path, expected)
+
+    assert path.read_bytes() == b"new user data"
+
+
 @pytest.mark.parametrize("threshold", [-1, 65])
 def test_deduplication_options_validate_threshold(threshold: int) -> None:
     with pytest.raises(ValueError, match="between 0 and 64"):
@@ -139,7 +154,9 @@ def test_webp_converter_uses_injected_codec(tmp_path: Path) -> None:
     source.write_text("original image data")
     codec = FakeWebPCodec(encoded_size=4)
 
-    conversions, skips = WebPDirectoryConverter(codec).convert(tmp_path, quality=73)
+    conversions, skips = WebPDirectoryConverter(codec).convert(
+        tmp_path, quality=73, replace=True
+    )
 
     destination = tmp_path / "photo.webp"
     assert skips == []
@@ -160,7 +177,7 @@ def test_webp_converter_uses_injected_scanner(tmp_path: Path) -> None:
     conversions, _ = WebPDirectoryConverter(
         FakeWebPCodec(),
         scanner=StaticScanner([included]),
-    ).convert(tmp_path)
+    ).convert(tmp_path, replace=True)
 
     assert [conversion.source for conversion in conversions] == [included]
     assert excluded.exists()

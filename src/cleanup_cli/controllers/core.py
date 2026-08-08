@@ -93,5 +93,6 @@ class WebPConversionController(
         conversions, skips = self._model.convert(
             request.directory,
             quality=request.options.quality,
+            replace=request.options.replace,
         )
         return WebPConversionResult(tuple(conversions), tuple(skips))

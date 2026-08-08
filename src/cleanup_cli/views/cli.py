@@ -105,7 +105,7 @@ class ArgparseCliView:
         try:
             request = WebPConversionRequest(
                 args.directory,
-                WebPOptions(quality=args.quality),
+                WebPOptions(quality=args.quality, replace=args.replace),
             )
             result = self._webp.execute(request)
         except (NotADirectoryError, ValueError) as error:
@@ -175,6 +175,11 @@ def _build_parser() -> tuple[
         default=80,
         metavar="0-100",
         help="WebP encoding quality (default: 80)",
+    )
+    webp_parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="replace originals; without this flag, only validate a dry run",
     )
     return parser, duplicate_parser, webp_parser
 

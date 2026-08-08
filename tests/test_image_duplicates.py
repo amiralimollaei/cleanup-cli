@@ -11,6 +11,7 @@ from cleanup_cli import (
     index_images,
     perceptual_hash,
 )
+from cleanup_cli.models.abstractions import IndexedFile, file_identity
 from cleanup_cli.models.image_duplicates import Duplicate
 
 
@@ -156,9 +157,13 @@ def test_dry_run_keeps_files_and_delete_removes_only_earlier_match(
     last = tmp_path / "photo-2.pgm"
     first.touch()
     last.touch()
-    indexed = [(first, 123), (last, 123)]
+    indexed = [
+        IndexedFile(first, 123, file_identity(first)),
+        IndexedFile(last, 123, file_identity(last)),
+    ]
     monkeypatch.setattr(
-        "cleanup_cli.models.image_duplicates.index_images", lambda _: indexed
+        "cleanup_cli.models.image_duplicates.ImageIndexAdapter.index",
+        lambda self, directory: indexed,
     )
 
     assert deduplicate_directory(tmp_path) == [Duplicate(first, last, 0)]

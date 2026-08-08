@@ -100,11 +100,11 @@ def test_cli_view_builds_webp_request_and_renders_result() -> None:
     output = StringIO()
     view = ArgparseCliView(duplicate_controller, webp_controller, output=output)
 
-    exit_code = view.run(["webp", "/photos", "--quality", "90"])
+    exit_code = view.run(["webp", "/photos", "--quality", "90", "--replace"])
 
     assert exit_code == 0
     assert webp_controller.requests == [
-        WebPConversionRequest(Path("/photos"), WebPOptions(quality=90))
+        WebPConversionRequest(Path("/photos"), WebPOptions(quality=90, replace=True))
     ]
     assert output.getvalue().splitlines() == [
         "converted: photo.png -> photo.webp (saved 60 bytes)",

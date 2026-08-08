@@ -50,7 +50,7 @@ def test_converts_recursively_in_place_without_changing_dimensions(tmp_path: Pat
     _write_ppm(source)
     original_size = source.stat().st_size
 
-    conversions, skips = convert_directory_to_webp(tmp_path)
+    conversions, skips = convert_directory_to_webp(tmp_path, replace=True)
 
     destination = nested / "photo.webp"
     assert skips == []
@@ -101,6 +101,35 @@ def test_does_not_overwrite_an_existing_destination(tmp_path: Path) -> None:
     assert destination.read_bytes() == b"existing"
 
 
+def test_dry_run_never_replaces_source(tmp_path: Path) -> None:
+    source = tmp_path / "photo.ppm"
+    _write_ppm(source)
+    original = source.read_bytes()
+
+    conversions, skips = convert_directory_to_webp(tmp_path)
+
+    assert conversions == []
+    assert skips[0].reason == "replacement not enabled (use --replace)"
+    assert source.read_bytes() == original
+    assert not source.with_suffix(".webp").exists()
+
+
+def test_does_not_follow_or_overwrite_dangling_destination_symlink(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "photo.ppm"
+    destination = tmp_path / "photo.webp"
+    _write_ppm(source)
+    destination.symlink_to("missing.webp")
+
+    conversions, skips = convert_directory_to_webp(tmp_path, replace=True)
+
+    assert conversions == []
+    assert "destination exists" in skips[0].reason
+    assert source.exists()
+    assert destination.is_symlink()
+
+
 @pytest.mark.parametrize("quality", [-1, 101])
 def test_rejects_invalid_quality(tmp_path: Path, quality: int) -> None:
     with pytest.raises(ValueError, match="between 0 and 100"):
@@ -146,7 +175,7 @@ def test_converts_files_in_parallel_and_preserves_scan_order(tmp_path: Path) -> 
         TrackingCodec(), scanner=Scanner(sources), max_workers=4
     )
 
-    conversions, skips = converter.convert(tmp_path)
+    conversions, skips = converter.convert(tmp_path, replace=True)
 
     assert maximum_active > 1
     assert [conversion.source for conversion in conversions] == sources

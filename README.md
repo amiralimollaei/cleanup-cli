@@ -21,14 +21,17 @@ be replaced in tests or by another UI without changing the domain policies.
 
 ## Converting images to WebP
 
-The `webp` subcommand recursively finds decodable images and replaces each one
-with a `.webp` file in the same directory. Existing WebP images and non-image
-files are ignored. Pixel dimensions are preserved, and the original file is
-removed only after the WebP has been validated and is smaller. Existing
-destination files are never overwritten.
+The `webp` subcommand recursively finds decodable images and, by default,
+performs a non-destructive dry run. Use `--replace` to opt into replacing each
+source with a `.webp` file in the same directory. Quality 80 is lossy, so keep
+backups before using replacement. Existing WebP images, non-image files, and
+all existing destination directory entries (including dangling symlinks) are
+ignored. Pixel dimensions are preserved and a source is replaced only after
+the output is validated, is smaller, and the source is still the exact file
+that was analyzed. Destination installation is atomic and no-clobber.
 
 ```console
-cleanup-cli webp /path/to/photos
+cleanup-cli webp /path/to/photos --replace
 ```
 
 The default WebP quality is 80. It can be changed from 0 through 100:
@@ -57,6 +60,11 @@ Use `--delete` to remove the duplicates reported by the dry run:
 ```console
 cleanup-cli duplicates /path/to/photos --delete
 ```
+
+Deletion verifies that each candidate is unchanged since indexing. Changed or
+missing candidates are refused rather than deleting a different file. The
+command may still complete partially if an I/O error occurs; inspect its output
+and keep backups because `--delete` has no undo.
 
 The threshold is the maximum normalized structural or color distance. The
 structural value is the Hamming distance between two 64-bit pHashes; average

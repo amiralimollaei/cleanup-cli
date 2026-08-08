@@ -16,7 +16,12 @@ from av.error import FFmpegError
 from av.video.frame import VideoFrame
 from av.video.stream import VideoStream
 
-from .abstractions import DirectoryScanner, RecursiveDirectoryScanner
+from .abstractions import (
+    DirectoryScanner,
+    RecursiveDirectoryScanner,
+    file_identity,
+    quarantine_if_unchanged,
+)
 
 
 FrameT = TypeVar("FrameT")
@@ -45,6 +50,7 @@ class WebPOptions:
     """Validated options for a directory WebP conversion."""
 
     quality: int = 80
+    replace: bool = False
 
     def __post_init__(self) -> None:
         if not 0 <= self.quality <= 100:
@@ -149,8 +155,9 @@ class WebPDirectoryConverter(Generic[FrameT]):
         *,
         quality: int = 80,
         max_workers: int | None = None,
+        replace: bool = False,
     ) -> tuple[list[WebPConversion], list[WebPSkip]]:
-        options = WebPOptions(quality)
+        options = WebPOptions(quality, replace)
 
         conversions: list[WebPConversion] = []
         skips: list[WebPSkip] = []
@@ -187,14 +194,17 @@ class WebPDirectoryConverter(Generic[FrameT]):
         path: Path,
         options: WebPOptions,
     ) -> WebPConversion | WebPSkip | None:
+        source_identity = file_identity(path)
         decoded = self._codec.decode(path)
+        if file_identity(path) != source_identity:
+            return WebPSkip(path, "source changed while it was being read")
         if decoded.is_webp:
             return None
         if decoded.is_multi_frame:
             return WebPSkip(path, "multi-frame images are not supported")
 
         destination = path.with_suffix(".webp")
-        if destination.exists():
+        if os.path.lexists(destination):
             return WebPSkip(path, f"destination exists: {destination}")
 
         original_size = path.stat().st_size
@@ -208,11 +218,34 @@ class WebPDirectoryConverter(Generic[FrameT]):
             if webp_size >= original_size:
                 return WebPSkip(path, "WebP would not be smaller")
 
+            if not options.replace:
+                return WebPSkip(path, "replacement not enabled (use --replace)")
+
             with self._destination_lock:
-                if destination.exists():
+                if os.path.lexists(destination):
                     return WebPSkip(path, f"destination exists: {destination}")
-                os.replace(temporary, destination)
-                path.unlink()
+                try:
+                    source_quarantine = quarantine_if_unchanged(
+                        path, source_identity
+                    )
+                except OSError as error:
+                    return WebPSkip(path, str(error))
+                # A hard link gives same-filesystem atomic create/no-clobber
+                # semantics. os.replace() would destroy a concurrent output.
+                try:
+                    os.link(temporary, destination, follow_symlinks=False)
+                except FileExistsError:
+                    try:
+                        os.link(source_quarantine, path, follow_symlinks=False)
+                    except FileExistsError:
+                        pass
+                    else:
+                        source_quarantine.unlink()
+                        source_quarantine.parent.rmdir()
+                    return WebPSkip(path, f"destination exists: {destination}")
+                temporary.unlink()
+                source_quarantine.unlink()
+                source_quarantine.parent.rmdir()
             return WebPConversion(path, destination, original_size, webp_size)
         finally:
             temporary.unlink(missing_ok=True)
@@ -229,7 +262,11 @@ def _temporary_webp_path(source: Path) -> Path:
 
 
 def convert_directory_to_webp(
-    directory: str | Path, *, quality: int = 80, max_workers: int | None = None
+    directory: str | Path,
+    *,
+    quality: int = 80,
+    max_workers: int | None = None,
+    replace: bool = False,
 ) -> tuple[list[WebPConversion], list[WebPSkip]]:
     """Recursively replace images with smaller, equally sized WebP files.
 
@@ -239,4 +276,4 @@ def convert_directory_to_webp(
     """
 
     converter = WebPDirectoryConverter(PyAVWebPCodec(), max_workers=max_workers)
-    return converter.convert(Path(directory), quality=quality)
+    return converter.convert(Path(directory), quality=quality, replace=replace)

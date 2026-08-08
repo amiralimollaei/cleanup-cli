@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Generic, Protocol, TypeVar
@@ -17,8 +17,11 @@ from numpy.typing import NDArray
 from .abstractions import (
     DirectoryIndexer,
     DistanceMetric,
+    FileIdentity,
     IndexedFile,
     RecursiveDirectoryIndexer,
+    file_identity,
+    quarantine_if_unchanged,
 )
 
 
@@ -35,6 +38,7 @@ class Duplicate:
     removed: Path
     kept: Path
     distance: int
+    removed_identity: FileIdentity | None = field(default=None, compare=False)
 
 
 @dataclass(frozen=True)
@@ -199,7 +203,9 @@ class ReverseDuplicateDetector(DuplicateDetector[SignatureT]):
             if match is None:
                 kept.append(image)
             else:
-                duplicates.append(Duplicate(image.path, match[0], match[1]))
+                duplicates.append(
+                    Duplicate(image.path, match[0], match[1], image.identity)
+                )
 
         duplicates.reverse()
         return duplicates
@@ -216,8 +222,20 @@ class FileRemover(Protocol):
 class LocalFileRemover:
     """Remove files from the local filesystem."""
 
-    def remove(self, path: Path) -> None:
-        path.unlink()
+    def remove(self, path: Path, expected: FileIdentity | None = None) -> None:
+        if expected is None:
+            path.unlink()
+            return
+        try:
+            quarantine = quarantine_if_unchanged(path, expected)
+        except OSError as error:
+            raise FileChangedError(str(error)) from error
+        quarantine.unlink()
+        quarantine.parent.rmdir()
+
+
+class FileChangedError(OSError):
+    """A destructive action was refused because its input became stale."""
 
 
 class DirectoryDeduplicator(Generic[SignatureT]):
@@ -245,7 +263,12 @@ class DirectoryDeduplicator(Generic[SignatureT]):
 
         if request.delete:
             for duplicate in duplicates:
-                self._remover.remove(duplicate.removed)
+                if isinstance(self._remover, LocalFileRemover):
+                    self._remover.remove(
+                        duplicate.removed, duplicate.removed_identity
+                    )
+                else:
+                    self._remover.remove(duplicate.removed)
         return duplicates
 
 
@@ -253,7 +276,11 @@ class ImageIndexAdapter(DirectoryIndexer[int | ImageSignature]):
     """Expose the tuple-based image index API through the model contract."""
 
     def index(self, directory: Path) -> list[IndexedFile[int | ImageSignature]]:
-        return [IndexedFile(path, value) for path, value in index_images(directory)]
+        indexer = RecursiveDirectoryIndexer[int | ImageSignature](
+            PyAVImageSignatureAnalyzer(),
+            ignored_errors=(FFmpegError, EOFError, StopIteration, ValueError),
+        )
+        return indexer.index(directory)
 
 
 def _validate_threshold(threshold: int) -> None:
