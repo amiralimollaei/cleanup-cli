@@ -15,6 +15,7 @@ import av
 from av.error import FFmpegError
 from av.video.frame import VideoFrame
 from av.video.stream import VideoStream
+import tqdm
 
 from .abstractions import (
     DirectoryScanner,
@@ -168,7 +169,9 @@ class WebPDirectoryConverter(Generic[FrameT]):
             results = executor.map(
                 lambda path: self._convert_file_safely(path, options), paths
             )
-            for result in results:
+            for result in tqdm.tqdm(
+                results, total=len(paths), desc="converting", unit="file"
+            ):
                 if isinstance(result, WebPConversion):
                     conversions.append(result)
                 elif result is not None:
