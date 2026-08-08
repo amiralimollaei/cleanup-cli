@@ -11,7 +11,7 @@ from cleanup_cli import (
     index_images,
     perceptual_hash,
 )
-from cleanup_cli.image_duplicates import Duplicate
+from cleanup_cli.models.image_duplicates import Duplicate
 
 
 def _write_pgm(path: Path, pixels: np.ndarray) -> None:
@@ -115,7 +115,9 @@ def test_rejects_invalid_threshold_before_indexing(
     def unexpected_index(_: Path) -> list[tuple[Path, int]]:
         raise AssertionError("directory should not be indexed")
 
-    monkeypatch.setattr("cleanup_cli.image_duplicates.index_images", unexpected_index)
+    monkeypatch.setattr(
+        "cleanup_cli.models.image_duplicates.index_images", unexpected_index
+    )
 
     with pytest.raises(ValueError, match="between 0 and 64"):
         deduplicate_directory(tmp_path, threshold=65)
@@ -155,7 +157,9 @@ def test_dry_run_keeps_files_and_delete_removes_only_earlier_match(
     first.touch()
     last.touch()
     indexed = [(first, 123), (last, 123)]
-    monkeypatch.setattr("cleanup_cli.image_duplicates.index_images", lambda _: indexed)
+    monkeypatch.setattr(
+        "cleanup_cli.models.image_duplicates.index_images", lambda _: indexed
+    )
 
     assert deduplicate_directory(tmp_path) == [Duplicate(first, last, 0)]
     assert first.exists() and last.exists()

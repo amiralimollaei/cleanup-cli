@@ -2,6 +2,23 @@
 
 Command line tool for removing duplicate images, and compressing everything into webp for saving storage.
 
+## Architecture
+
+The package uses Model View Controller boundaries:
+
+- Models in `cleanup_cli/models/` own image policies, filesystem operations,
+  and reusable generic services.
+- Controllers in `cleanup_cli/controllers/` accept immutable request
+  dataclasses and return immutable result dataclasses without depending on CLI
+  concerns.
+- The CLI view in `cleanup_cli/views/` owns argument parsing, output formatting,
+  and the production dependency composition.
+
+Protocols define structural dependencies such as scanners, analyzers, metrics,
+removers, and views. Abstract generic base classes define extensible indexer,
+codec, detector, and controller APIs. Concrete implementations can therefore
+be replaced in tests or by another UI without changing the domain policies.
+
 ## Converting images to WebP
 
 The `webp` subcommand recursively finds decodable images and replaces each one

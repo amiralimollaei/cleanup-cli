@@ -249,6 +249,13 @@ class DirectoryDeduplicator(Generic[SignatureT]):
         return duplicates
 
 
+class ImageIndexAdapter(DirectoryIndexer[int | ImageSignature]):
+    """Expose the tuple-based image index API through the model contract."""
+
+    def index(self, directory: Path) -> list[IndexedFile[int | ImageSignature]]:
+        return [IndexedFile(path, value) for path, value in index_images(directory)]
+
+
 def _validate_threshold(threshold: int) -> None:
     if not 0 <= threshold <= PHASH_BITS:
         raise ValueError(f"threshold must be between 0 and {PHASH_BITS}")
@@ -284,10 +291,9 @@ def deduplicate_directory(
 ) -> list[Duplicate]:
     """Find duplicates recursively and optionally delete earlier paths."""
 
+    model = DirectoryDeduplicator(
+        ImageIndexAdapter(),
+        ReverseDuplicateDetector(ImageSignatureDistance()),
+    )
     options = DeduplicationOptions(threshold=threshold, delete=delete)
-    duplicates = find_duplicates(index_images(directory), options.threshold)
-    if options.delete:
-        remover = LocalFileRemover()
-        for duplicate in duplicates:
-            remover.remove(duplicate.removed)
-    return duplicates
+    return model.deduplicate(Path(directory), options)

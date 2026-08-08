@@ -14,7 +14,7 @@ from cleanup_cli import (
     WebPDirectoryConverter,
     WebPOptions,
 )
-from cleanup_cli.image_duplicates import Duplicate
+from cleanup_cli.models.image_duplicates import Duplicate
 
 
 class TextLengthAnalyzer:
