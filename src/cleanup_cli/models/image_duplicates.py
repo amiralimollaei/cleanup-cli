@@ -17,6 +17,7 @@ from .abstractions import (
     DirectoryIndexer,
     DistanceMetric,
     FileIdentity,
+    ImageDirectoryScanner,
     IndexedFile,
     RecursiveDirectoryIndexer,
     file_identity,
@@ -276,7 +277,8 @@ class ImageIndexAdapter(DirectoryIndexer[int | ImageSignature]):
 
     def index(self, directory: Path) -> list[IndexedFile[int | ImageSignature]]:
         indexer = RecursiveDirectoryIndexer[int | ImageSignature](
-            PyAVImageSignatureAnalyzer()
+            PyAVImageSignatureAnalyzer(),
+            scanner=ImageDirectoryScanner(),
         )
         return indexer.index(directory)
 
@@ -291,6 +293,7 @@ def index_images(directory: str | Path) -> list[tuple[Path, ImageSignature]]:
 
     indexer = RecursiveDirectoryIndexer(
         PyAVImageSignatureAnalyzer(),
+        scanner=ImageDirectoryScanner(),
     )
     return [(image.path, image.value) for image in indexer.index(Path(directory))]
 

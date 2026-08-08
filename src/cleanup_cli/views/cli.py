@@ -18,7 +18,7 @@ from ..controllers import (
     WebPConversionRequest,
     WebPConversionResult,
 )
-from ..models.abstractions import RecursiveDirectoryIndexer
+from ..models.abstractions import ImageDirectoryScanner, RecursiveDirectoryIndexer
 from ..models.image_duplicates import (
     DeduplicationOptions,
     DirectoryDeduplicator,
@@ -133,6 +133,7 @@ def create_cli_view(*, output: TextIO | None = None) -> ArgparseCliView:
 
     indexer = RecursiveDirectoryIndexer(
         PyAVImageSignatureAnalyzer(),
+        scanner=ImageDirectoryScanner(),
     )
     deduplicator = DirectoryDeduplicator(
         indexer,

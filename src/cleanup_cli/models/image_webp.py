@@ -19,7 +19,7 @@ import tqdm
 
 from .abstractions import (
     DirectoryScanner,
-    RecursiveDirectoryScanner,
+    ImageDirectoryScanner,
     file_identity,
     hard_link_no_clobber,
     quarantine_if_unchanged,
@@ -144,7 +144,7 @@ class WebPDirectoryConverter(Generic[FrameT]):
         max_workers: int | None = None,
     ) -> None:
         self._codec = codec
-        self._scanner = scanner or RecursiveDirectoryScanner()
+        self._scanner = scanner or ImageDirectoryScanner()
         self._max_workers = max_workers
         # Two source files can have the same destination (for example, foo.jpg
         # and foo.png).  Keep the final check-and-replace operation atomic from

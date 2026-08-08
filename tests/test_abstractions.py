@@ -7,6 +7,7 @@ from cleanup_cli import (
     DecodedImage,
     DirectoryDeduplicator,
     DirectoryIndexer,
+    ImageDirectoryScanner,
     IndexedFile,
     RecursiveDirectoryIndexer,
     ReverseDuplicateDetector,
@@ -187,3 +188,23 @@ def test_webp_converter_uses_injected_scanner(tmp_path: Path) -> None:
 def test_webp_options_validate_quality(quality: int) -> None:
     with pytest.raises(ValueError, match="between 0 and 100"):
         WebPOptions(quality)
+
+
+def test_image_directory_scanner_only_yields_still_images(
+    tmp_path: Path,
+) -> None:
+    image = tmp_path / "photo-1.jpg"
+    image.write_bytes(b"image")
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"video")
+    notes = tmp_path / "notes.txt"
+    notes.write_text("not an image")
+    unsupported = tmp_path / "design.psd"
+    unsupported.write_bytes(b"not decodable by ffmpeg")
+
+    assert list(ImageDirectoryScanner().scan(tmp_path)) == [image]
+
+
+def test_image_directory_scanner_rejects_non_directory(tmp_path: Path) -> None:
+    with pytest.raises(NotADirectoryError):
+        list(ImageDirectoryScanner().scan(tmp_path / "missing"))

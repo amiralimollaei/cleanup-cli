@@ -117,6 +117,63 @@ class DirectoryScanner(Protocol):
         ...
 
 
+class PathFilter(Protocol):
+    """Decide whether a discovered path should be included in a scan."""
+
+    def accepts(self, path: Path) -> bool:
+        """Return *True* when *path* should be yielded by a scanner."""
+        ...
+
+
+#: Still-image extensions decodable by the Av/ffmpeg image demuxers. The set
+#: mirrors the still-image formats ffmpeg exposes (``*_pipe`` demuxers plus
+#: dedicated image containers). Animated or multi-frame formats (``gif``,
+#: ``webp``, ``tiff``) are intentionally included: the analyzers and
+#: converters skip or reject them downstream. The filter exists only to keep
+#: large *videos* out of the decode path entirely, where opening them to
+#: discover "not an image" can exhaust memory.
+IMAGE_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".apng",
+        ".gif",
+        ".webp",
+        ".bmp",
+        ".tif",
+        ".tiff",
+        ".pnm",
+        ".ppm",
+        ".pgm",
+        ".pbm",
+        ".pcx",
+        ".dds",
+        ".exr",
+        ".hdr",
+        ".fits",
+        ".qoi",
+        ".jp2",
+        ".j2k",
+        ".jls",
+        ".jxl",
+        ".xbm",
+        ".xwd",
+        ".sun",
+        ".ras",
+        ".ico",
+        ".wbmp",
+    }
+)
+
+
+class ImageExtensionFilter:
+    """Accept paths whose suffix is a recognized image extension."""
+
+    def accepts(self, path: Path) -> bool:
+        return path.suffix.lower() in IMAGE_EXTENSIONS
+
+
 @dataclass(frozen=True)
 class IndexedFile(Generic[ValueT]):
     """A file paired with its analyzed domain value."""
@@ -148,6 +205,11 @@ class RecursiveDirectoryScanner:
         self._orderer = orderer or NaturalPathOrderer()
 
     def scan(self, directory: Path) -> Iterator[Path]:
+        yield from self._discover(directory)
+
+    def _discover(self, directory: Path) -> Iterator[Path]:
+        """Yield every regular file below *directory* in natural order."""
+
         if not directory.is_dir():
             raise NotADirectoryError(directory)
 
@@ -157,6 +219,27 @@ class RecursiveDirectoryScanner:
             if path.is_file() and not path.is_symlink()
         )
         yield from self._orderer.order(files)
+
+
+class ImageDirectoryScanner:
+    """Recursively discover only still-image files in a stable order.
+
+    Videos and other non-image files never reach a decoder, so a large media
+    file cannot exhaust memory merely by being probed as a potential image.
+    """
+
+    def __init__(
+        self,
+        orderer: PathOrderer | None = None,
+        filter: PathFilter | None = None,
+    ) -> None:
+        self._recursive = RecursiveDirectoryScanner(orderer)
+        self._filter = filter or ImageExtensionFilter()
+
+    def scan(self, directory: Path) -> Iterator[Path]:
+        for path in self._recursive._discover(directory):
+            if self._filter.accepts(path):
+                yield path
 
 
 class RecursiveDirectoryIndexer(DirectoryIndexer[ValueT]):
