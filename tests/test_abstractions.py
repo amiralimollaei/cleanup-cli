@@ -94,7 +94,7 @@ def test_recursive_indexer_accepts_analyzer_and_skips_configured_errors(
 
 
 def test_recursive_indexer_rejects_non_directory(tmp_path: Path) -> None:
-    indexer = RecursiveDirectoryIndexer(TextLengthAnalyzer())
+    indexer = RecursiveDirectoryIndexer(TextLengthAnalyzer(), ignored_errors=())
 
     with pytest.raises(NotADirectoryError):
         indexer.index(tmp_path / "missing")

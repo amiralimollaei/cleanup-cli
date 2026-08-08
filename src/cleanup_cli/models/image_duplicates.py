@@ -71,7 +71,7 @@ def _dct_matrix(size: int) -> NDArray[np.float64]:
     matrix[1:] *= np.sqrt(2.0 / size)
     return matrix
 
-
+@lru_cache(maxsize=None)
 def _load_normalized(path: Path) -> tuple[NDArray[np.float64], NDArray[np.uint8]]:
     """Decode the first image frame into normalized grayscale and RGB arrays."""
 
@@ -277,8 +277,7 @@ class ImageIndexAdapter(DirectoryIndexer[int | ImageSignature]):
 
     def index(self, directory: Path) -> list[IndexedFile[int | ImageSignature]]:
         indexer = RecursiveDirectoryIndexer[int | ImageSignature](
-            PyAVImageSignatureAnalyzer(),
-            ignored_errors=(FFmpegError, EOFError, StopIteration, ValueError),
+            PyAVImageSignatureAnalyzer()
         )
         return indexer.index(directory)
 
@@ -293,7 +292,6 @@ def index_images(directory: str | Path) -> list[tuple[Path, ImageSignature]]:
 
     indexer = RecursiveDirectoryIndexer(
         PyAVImageSignatureAnalyzer(),
-        ignored_errors=(FFmpegError, EOFError, StopIteration, ValueError),
     )
     return [(image.path, image.value) for image in indexer.index(Path(directory))]
 

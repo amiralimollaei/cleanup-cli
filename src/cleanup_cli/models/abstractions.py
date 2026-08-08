@@ -10,6 +10,10 @@ from pathlib import Path
 import tempfile
 from typing import Generic, Protocol, TypeVar
 
+import tqdm
+
+from av.error import FFmpegError
+
 from .path_sort import sort_numbered_paths
 
 
@@ -145,7 +149,7 @@ class RecursiveDirectoryIndexer(DirectoryIndexer[ValueT]):
         *,
         scanner: DirectoryScanner | None = None,
         orderer: PathOrderer | None = None,
-        ignored_errors: tuple[type[Exception], ...] = (),
+        ignored_errors: tuple[type[Exception], ...] = (FFmpegError, EOFError, StopIteration, ValueError, IndexError),
     ) -> None:
         self._analyzer = analyzer
         if scanner is not None and orderer is not None:
@@ -155,7 +159,7 @@ class RecursiveDirectoryIndexer(DirectoryIndexer[ValueT]):
 
     def index(self, directory: Path) -> list[IndexedFile[ValueT]]:
         indexed: list[IndexedFile[ValueT]] = []
-        for path in self._scanner.scan(directory):
+        for path in tqdm.tqdm(self._scanner.scan(directory), desc=f"indexing {directory}", unit="file"):
             try:
                 identity = file_identity(path)
                 value = self._analyzer.analyze(path)

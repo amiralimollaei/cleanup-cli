@@ -133,7 +133,6 @@ def create_cli_view(*, output: TextIO | None = None) -> ArgparseCliView:
 
     indexer = RecursiveDirectoryIndexer(
         PyAVImageSignatureAnalyzer(),
-        ignored_errors=(FFmpegError, EOFError, StopIteration, ValueError),
     )
     deduplicator = DirectoryDeduplicator(
         indexer,
