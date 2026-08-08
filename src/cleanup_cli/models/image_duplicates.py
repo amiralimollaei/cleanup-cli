@@ -11,7 +11,6 @@ from typing import Generic, Protocol, TypeVar
 
 import av
 import numpy as np
-from av.error import FFmpegError
 from numpy.typing import NDArray
 
 from .abstractions import (
