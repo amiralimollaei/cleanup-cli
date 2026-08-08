@@ -39,6 +39,25 @@ def file_identity(path: Path) -> FileIdentity:
     return FileIdentity(stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
 
 
+def hard_link_no_clobber(source: Path, destination: Path) -> None:
+    """Make *destination* contain *source*'s data without clobbering it.
+
+    Hard links give an atomic, same-filesystem, no-overwrite publish.  When the
+    platform or filesystem does not provide ``os.link``, fall back to a
+    byte-for-byte copy that likewise refuses to overwrite an existing file.
+
+    Raises ``FileExistsError`` if *destination* already exists.
+    """
+
+    try:
+        os.link(source, destination, follow_symlinks=False)
+    except (AttributeError, NotImplementedError):
+        # os.link is missing or unsupported on this platform.
+        with open(source, "rb") as input_stream, open(destination, "xb") as output_stream:
+            while chunk := input_stream.read(65536):
+                output_stream.write(chunk)
+
+
 def quarantine_if_unchanged(path: Path, expected: FileIdentity) -> Path:
     """Atomically move *path* aside and verify it is the analyzed file.
 
@@ -56,7 +75,7 @@ def quarantine_if_unchanged(path: Path, expected: FileIdentity) -> Path:
         return quarantine
 
     try:
-        os.link(quarantine, path, follow_symlinks=False)
+        hard_link_no_clobber(quarantine, path)
     except FileExistsError:
         raise OSError(
             f"file changed and was preserved at recovery path: {quarantine}"

@@ -21,6 +21,7 @@ from .abstractions import (
     DirectoryScanner,
     RecursiveDirectoryScanner,
     file_identity,
+    hard_link_no_clobber,
     quarantine_if_unchanged,
 )
 
@@ -236,10 +237,10 @@ class WebPDirectoryConverter(Generic[FrameT]):
                 # A hard link gives same-filesystem atomic create/no-clobber
                 # semantics. os.replace() would destroy a concurrent output.
                 try:
-                    os.link(temporary, destination, follow_symlinks=False)
+                    hard_link_no_clobber(temporary, destination)
                 except FileExistsError:
                     try:
-                        os.link(source_quarantine, path, follow_symlinks=False)
+                        hard_link_no_clobber(source_quarantine, path)
                     except FileExistsError:
                         pass
                     else:
