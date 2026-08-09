@@ -71,6 +71,25 @@ def test_skips_existing_webp_and_non_images(tmp_path: Path) -> None:
     assert webp.read_bytes() == contents
 
 
+def test_skips_webp_by_path_before_decoding(tmp_path: Path) -> None:
+    class FailingCodec(WebPCodec[object]):
+        def decode(self, path: Path) -> DecodedImage[object]:
+            raise AssertionError("existing WebP should not be decoded")
+
+        def encode(self, frame: object, destination: Path, quality: int) -> None:
+            raise AssertionError("existing WebP should not be encoded")
+
+        def dimensions(self, path: Path) -> tuple[int, int]:
+            raise AssertionError("existing WebP should not be inspected")
+
+    webp = tmp_path / "already-converted.WEBP"
+    webp.write_bytes(b"not even a decodable WebP")
+
+    converter = WebPDirectoryConverter(FailingCodec())
+
+    assert converter.convert(tmp_path, replace=True) == ([], [])
+
+
 def test_keeps_source_when_webp_is_not_smaller(tmp_path: Path) -> None:
     source = tmp_path / "tiny.ppm"
     source.write_bytes(b"P6\n1 1\n255\n\xff\x00\x00")

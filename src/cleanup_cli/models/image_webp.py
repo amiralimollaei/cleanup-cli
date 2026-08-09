@@ -183,6 +183,15 @@ class WebPDirectoryConverter(Generic[FrameT]):
         path: Path,
         options: WebPOptions,
     ) -> WebPConversion | WebPSkip | None:
+        # The scanner intentionally includes WebP files so other image
+        # operations can inspect them, but this converter must never decode
+        # them.  In particular, decoding first is unnecessary work and makes
+        # the decision depend on codec probing rather than the directory
+        # entry's format.  It also avoids any possibility of a WebP being
+        # passed back through the encoder on a subsequent run.
+        if path.suffix.lower() == ".webp":
+            return None
+
         source_identity = file_identity(path)
         decoded = self._codec.decode(path)
         if file_identity(path) != source_identity:
