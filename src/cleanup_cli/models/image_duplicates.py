@@ -70,6 +70,14 @@ class ImageSignature:
     resolution: tuple[int, int] = (0, 0)
 
 
+@dataclass(frozen=True, order=True)
+class ImageQuality:
+    """Ranking criteria (resolution, then file size) for quality comparisons."""
+
+    pixels: int
+    size: int
+
+
 @dataclass(frozen=True)
 class NormalizedImage:
     """Normalized pixels and source metadata produced by one image decode."""
@@ -193,8 +201,8 @@ def _signature_distance(
 
 
 def image_quality_key(
-    image: IndexedFile[int | ImageSignature],
-) -> tuple[int, int]:
+    image: IndexedFile[SignatureT],
+) -> ImageQuality:
     """Rank an image by resolution, then by its encoded file size.
 
     The indexer already records the file identity, so using its size avoids a
@@ -213,7 +221,7 @@ def image_quality_key(
             size = image.path.stat().st_size
         except OSError:
             pass
-    return pixels, size
+    return ImageQuality(pixels, size)
 
 
 class ImageSignatureDistance:
@@ -250,10 +258,10 @@ class QualityAwareDuplicateDetector(DuplicateDetector[SignatureT]):
     def __init__(
         self,
         metric: DistanceMetric[SignatureT],
-        quality_key: Callable[[IndexedFile[SignatureT]], tuple[int, int]] | None = None,
+        quality_key: Callable[[IndexedFile[SignatureT]], ImageQuality] | None = None,
     ) -> None:
         self._metric = metric
-        self._quality_key = quality_key or (lambda _: (0, 0))
+        self._quality_key = quality_key or (lambda _: ImageQuality(0, 0))
 
     def find(
         self,
