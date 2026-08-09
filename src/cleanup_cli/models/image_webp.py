@@ -5,10 +5,8 @@ from __future__ import annotations
 import os
 import tempfile
 from abc import ABC, abstractmethod
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from threading import Lock
 from typing import Generic, TypeVar, cast
 
 import av
@@ -141,22 +139,15 @@ class WebPDirectoryConverter(Generic[FrameT]):
         codec: WebPCodec[FrameT],
         *,
         scanner: DirectoryScanner | None = None,
-        max_workers: int | None = None,
     ) -> None:
         self._codec = codec
         self._scanner = scanner or ImageDirectoryScanner()
-        self._max_workers = max_workers
-        # Two source files can have the same destination (for example, foo.jpg
-        # and foo.png).  Keep the final check-and-replace operation atomic from
-        # the converter's point of view so workers never overwrite each other.
-        self._destination_lock = Lock()
 
     def convert(
         self,
         directory: Path,
         *,
         quality: int = 80,
-        max_workers: int | None = None,
         replace: bool = False,
     ) -> tuple[list[WebPConversion], list[WebPSkip]]:
         options = WebPOptions(quality, replace)
@@ -165,18 +156,12 @@ class WebPDirectoryConverter(Generic[FrameT]):
         skips: list[WebPSkip] = []
 
         paths = list(self._scanner.scan(directory))
-        workers = self._max_workers if max_workers is None else max_workers
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            results = executor.map(
-                lambda path: self._convert_file_safely(path, options), paths
-            )
-            for result in tqdm.tqdm(
-                results, total=len(paths), desc="converting", unit="file"
-            ):
-                if isinstance(result, WebPConversion):
-                    conversions.append(result)
-                elif result is not None:
-                    skips.append(result)
+        for path in tqdm.tqdm(paths, desc="converting", unit="file"):
+            result = self._convert_file_safely(path, options)
+            if isinstance(result, WebPConversion):
+                conversions.append(result)
+            elif result is not None:
+                skips.append(result)
 
         return conversions, skips
 
@@ -225,31 +210,28 @@ class WebPDirectoryConverter(Generic[FrameT]):
             if not options.replace:
                 return WebPSkip(path, "replacement not enabled (use --replace)")
 
-            with self._destination_lock:
-                if os.path.lexists(destination):
-                    return WebPSkip(path, f"destination exists: {destination}")
+            if os.path.lexists(destination):
+                return WebPSkip(path, f"destination exists: {destination}")
+            try:
+                source_quarantine = quarantine_if_unchanged(path, source_identity)
+            except OSError as error:
+                return WebPSkip(path, str(error))
+            # A hard link gives same-filesystem atomic create/no-clobber
+            # semantics. os.replace() would destroy a concurrent output.
+            try:
+                hard_link_no_clobber(temporary, destination)
+            except FileExistsError:
                 try:
-                    source_quarantine = quarantine_if_unchanged(
-                        path, source_identity
-                    )
-                except OSError as error:
-                    return WebPSkip(path, str(error))
-                # A hard link gives same-filesystem atomic create/no-clobber
-                # semantics. os.replace() would destroy a concurrent output.
-                try:
-                    hard_link_no_clobber(temporary, destination)
+                    hard_link_no_clobber(source_quarantine, path)
                 except FileExistsError:
-                    try:
-                        hard_link_no_clobber(source_quarantine, path)
-                    except FileExistsError:
-                        pass
-                    else:
-                        source_quarantine.unlink()
-                        source_quarantine.parent.rmdir()
-                    return WebPSkip(path, f"destination exists: {destination}")
-                temporary.unlink()
-                source_quarantine.unlink()
-                source_quarantine.parent.rmdir()
+                    pass
+                else:
+                    source_quarantine.unlink()
+                    source_quarantine.parent.rmdir()
+                return WebPSkip(path, f"destination exists: {destination}")
+            temporary.unlink()
+            source_quarantine.unlink()
+            source_quarantine.parent.rmdir()
             return WebPConversion(path, destination, original_size, webp_size)
         finally:
             temporary.unlink(missing_ok=True)
@@ -269,7 +251,6 @@ def convert_directory_to_webp(
     directory: str | Path,
     *,
     quality: int = 80,
-    max_workers: int | None = None,
     replace: bool = False,
 ) -> tuple[list[WebPConversion], list[WebPSkip]]:
     """Recursively replace images with smaller, equally sized WebP files.
@@ -279,5 +260,5 @@ def convert_directory_to_webp(
     use fewer bytes. Existing destination paths are never overwritten.
     """
 
-    converter = WebPDirectoryConverter(PyAVWebPCodec(), max_workers=max_workers)
+    converter = WebPDirectoryConverter(PyAVWebPCodec())
     return converter.convert(Path(directory), quality=quality, replace=replace)
