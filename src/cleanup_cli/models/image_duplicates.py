@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Generic, Protocol, TypeVar
+from typing import Callable, Generic, Protocol, TypeVar
 import warnings
 
 import numpy as np
@@ -39,7 +39,7 @@ SignatureT = TypeVar("SignatureT")
 
 @dataclass(frozen=True)
 class Duplicate:
-    """A duplicate path and the later sorted path retained in its place."""
+    """A duplicate path and the higher-quality path retained in its place."""
 
     removed: Path
     kept: Path
@@ -63,10 +63,20 @@ class DeduplicationOptions:
 
 @dataclass(frozen=True)
 class ImageSignature:
-    """Structural pHash plus average normalized RGB color."""
+    """Structural and color fingerprints plus the source pixel dimensions."""
 
     phash: int
     average_rgb: tuple[int, int, int]
+    resolution: tuple[int, int] = (0, 0)
+
+
+@dataclass(frozen=True)
+class NormalizedImage:
+    """Normalized pixels and source metadata produced by one image decode."""
+
+    grayscale: NDArray[np.float64]
+    rgb: NDArray[np.uint8]
+    resolution: tuple[int, int]
 
 
 @lru_cache(maxsize=None)
@@ -81,7 +91,9 @@ def _dct_matrix(size: int) -> NDArray[np.float64]:
     return matrix
 
 
-def _load_normalized(path: Path) -> tuple[NDArray[np.float64], NDArray[np.uint8]]:
+def _load_normalized(
+    path: Path,
+) -> NormalizedImage:
     """Decode the first image frame into normalized grayscale and RGB arrays."""
 
     # Pillow warns once an image exceeds its decompression-bomb threshold.
@@ -92,12 +104,13 @@ def _load_normalized(path: Path) -> tuple[NDArray[np.float64], NDArray[np.uint8]
         warnings.simplefilter("error", Image.DecompressionBombWarning)
         with Image.open(path) as image:
             image.seek(0)
+            resolution = image.size
             normalized = image.convert("RGB").resize(
                 (PHASH_SIZE, PHASH_SIZE), Image.Resampling.LANCZOS
             )
             rgb = np.asarray(normalized, dtype=np.uint8)
             grayscale = np.asarray(normalized.convert("L"), dtype=np.float64)
-            return grayscale, rgb
+            return NormalizedImage(grayscale, rgb, resolution)
 
 
 def _dct_2d(pixels: NDArray[np.float64]) -> NDArray[np.float64]:
@@ -131,21 +144,21 @@ def _phash(pixels: NDArray[np.float64]) -> int:
 def perceptual_hash(path: str | Path) -> int:
     """Calculate a 64-bit pHash for an image decoded with Pillow."""
 
-    grayscale, _ = _load_normalized(Path(path))
-    return _phash(grayscale)
+    return _phash(_load_normalized(Path(path)).grayscale)
 
 
 def image_signature(path: str | Path) -> ImageSignature:
     """Calculate structural and color fingerprints from one image decode."""
 
-    grayscale, rgb = _load_normalized(Path(path))
+    normalized = _load_normalized(Path(path))
+    grayscale, rgb = normalized.grayscale, normalized.rgb
     channels = rgb.mean(axis=(0, 1))
     average_rgb = (
         int(round(channels[0])),
         int(round(channels[1])),
         int(round(channels[2])),
     )
-    return ImageSignature(_phash(grayscale), average_rgb)
+    return ImageSignature(_phash(grayscale), average_rgb, normalized.resolution)
 
 
 class PillowImageSignatureAnalyzer:
@@ -179,6 +192,30 @@ def _signature_distance(
     return max(structure, color)
 
 
+def image_quality_key(
+    image: IndexedFile[int | ImageSignature],
+) -> tuple[int, int]:
+    """Rank an image by resolution, then by its encoded file size.
+
+    The indexer already records the file identity, so using its size avoids a
+    second stat call during a directory deduplication.  The input sequence is
+    naturally sorted and Python's stable sort consequently makes its last
+    path win when both values tie.
+    """
+
+    resolution = (
+        image.value.resolution if isinstance(image.value, ImageSignature) else (0, 0)
+    )
+    pixels = resolution[0] * resolution[1]
+    size = image.identity.size if image.identity is not None else 0
+    if image.identity is None:
+        try:
+            size = image.path.stat().st_size
+        except OSError:
+            pass
+    return pixels, size
+
+
 class ImageSignatureDistance:
     """Compare legacy pHashes or full structural and color signatures."""
 
@@ -202,11 +239,21 @@ class DuplicateDetector(ABC, Generic[SignatureT]):
         """Return files considered duplicates under *threshold*."""
 
 
-class ReverseDuplicateDetector(DuplicateDetector[SignatureT]):
-    """Keep the last match while avoiding non-transitive deletion chains."""
+class QualityAwareDuplicateDetector(DuplicateDetector[SignatureT]):
+    """Keep the best match while avoiding non-transitive deletion chains.
 
-    def __init__(self, metric: DistanceMetric[SignatureT]) -> None:
+    Candidates are ranked from lowest to highest quality. Python's stable sort
+    preserves path order when quality ties, so the last input path is retained
+    as the final tie-breaker.
+    """
+
+    def __init__(
+        self,
+        metric: DistanceMetric[SignatureT],
+        quality_key: Callable[[IndexedFile[SignatureT]], tuple[int, int]] | None = None,
+    ) -> None:
         self._metric = metric
+        self._quality_key = quality_key or (lambda _: (0, 0))
 
     def find(
         self,
@@ -215,9 +262,10 @@ class ReverseDuplicateDetector(DuplicateDetector[SignatureT]):
     ) -> list[Duplicate]:
         _validate_threshold(threshold)
 
+        ranked_images = sorted(images, key=self._quality_key)
         kept: list[IndexedFile[SignatureT]] = []
         duplicates: list[Duplicate] = []
-        for image in reversed(images):
+        for image in reversed(ranked_images):
             match: tuple[Path, int] | None = None
             for retained in kept:
                 distance = self._metric.distance(image.value, retained.value)
@@ -232,7 +280,13 @@ class ReverseDuplicateDetector(DuplicateDetector[SignatureT]):
                     Duplicate(image.path, match[0], match[1], image.identity)
                 )
 
-        duplicates.reverse()
+        duplicates.sort(
+            key=lambda duplicate: next(
+                position
+                for position, image in enumerate(images)
+                if image.path == duplicate.removed
+            )
+        )
         return duplicates
 
 
@@ -336,15 +390,17 @@ def index_images(
 def find_duplicates(
     images: Sequence[tuple[Path, int | ImageSignature]], threshold: int = 0
 ) -> list[Duplicate]:
-    """Choose duplicates while retaining the last naturally sorted match.
+    """Choose duplicates while retaining the highest-quality matching image.
 
     The reverse scan compares each image only with later paths that will
-    actually be retained. This avoids deleting through a non-transitive chain
-    where A matches B and B matches C, but A does not match C.
+    actually be retained. Quality is ranked by resolution, then file size; the
+    last naturally sorted path wins if both values tie. This avoids deleting
+    through a non-transitive chain where A matches B and B matches C, but A
+    does not match C.
     """
 
     indexed = [IndexedFile(path, signature) for path, signature in images]
-    detector = ReverseDuplicateDetector(ImageSignatureDistance())
+    detector = QualityAwareDuplicateDetector(ImageSignatureDistance(), image_quality_key)
     return detector.find(indexed, threshold)
 
 
@@ -359,7 +415,7 @@ def deduplicate_directory(
 
     model = DirectoryDeduplicator(
         ImageIndexAdapter(),
-        ReverseDuplicateDetector(ImageSignatureDistance()),
+        QualityAwareDuplicateDetector(ImageSignatureDistance(), image_quality_key),
     )
     options = DeduplicationOptions(
         threshold=threshold, delete=delete, max_workers=max_workers

@@ -152,6 +152,38 @@ def test_keeps_last_sorted_image_without_transitive_matching() -> None:
     ]
 
 
+def test_quality_selection_prefers_resolution_then_size_then_last_path(
+    tmp_path: Path,
+) -> None:
+    low_path = tmp_path / "1-low.png"
+    large_path = tmp_path / "2-large.png"
+    high_path = tmp_path / "3-high.png"
+    equal_first = tmp_path / "4-same.png"
+    equal_last = tmp_path / "5-same.png"
+    for path, size in (
+        (low_path, 10),
+        (large_path, 100),
+        (high_path, 20),
+        (equal_first, 50),
+        (equal_last, 50),
+    ):
+        path.write_bytes(b"x" * size)
+
+    low = image_duplicates.ImageSignature(0, (0, 0, 0), (10, 10))
+    high = image_duplicates.ImageSignature(0, (0, 0, 0), (20, 20))
+    equal_resolution = image_duplicates.ImageSignature(0, (0, 0, 0), (30, 30))
+
+    assert find_duplicates([(low_path, low), (high_path, high)]) == [
+        Duplicate(low_path, high_path, 0)
+    ]
+    assert find_duplicates([(low_path, low), (large_path, low)]) == [
+        Duplicate(low_path, large_path, 0)
+    ]
+    assert find_duplicates(
+        [(equal_first, equal_resolution), (equal_last, equal_resolution)]
+    ) == [Duplicate(equal_first, equal_last, 0)]
+
+
 def test_indexes_recursively_in_natural_order_and_skips_non_images(
     tmp_path: Path,
 ) -> None:

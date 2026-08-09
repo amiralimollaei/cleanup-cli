@@ -22,6 +22,7 @@ from ..models.image_duplicates import (
     ImageSignatureDistance,
     PillowImageSignatureAnalyzer,
     ReverseDuplicateDetector,
+    image_quality_key,
 )
 from ..models.image_webp import PillowWebPCodec, WebPDirectoryConverter
 from .commands import DeduplicateCommand, WebPCommand
@@ -92,7 +93,9 @@ def create_cli_view(*, output: TextIO | None = None) -> ArgparseCliView:
     )
     deduplicator = DirectoryDeduplicator(
         indexer,
-        ReverseDuplicateDetector[ImageSignature](ImageSignatureDistance()),
+        ReverseDuplicateDetector[ImageSignature](
+            ImageSignatureDistance(), image_quality_key
+        ),
     )
     deduplication_controller = DeduplicationController(deduplicator)
     webp_controller = WebPConversionController(WebPDirectoryConverter(PillowWebPCodec()))

@@ -46,8 +46,10 @@ cleanup-cli webp /path/to/photos --quality 90
 computes a 64-bit perceptual hash (pHash) using a NumPy DCT. A normalized RGB
 color signature is also checked because grayscale pHash alone cannot detect a
 uniform color shift. Files that PyAV cannot decode as images are ignored.
-Paths are naturally sorted using the rules below, and only the **last** sorted
-path among matching images is kept.
+Paths are naturally sorted using the rules below. Among matching images, the
+image with the highest pixel resolution is kept. If resolutions match, the
+larger file is kept as a quality tie-breaker; if resolution and file size both
+match, the **last** naturally sorted path is kept.
 
 The default is a dry run and does not change any files:
 
