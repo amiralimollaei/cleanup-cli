@@ -7,12 +7,9 @@ import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Generic, TypeVar, cast
+from typing import Generic, TypeVar
 
-import av
-from av.error import FFmpegError
-from av.video.frame import VideoFrame
-from av.video.stream import VideoStream
+from PIL import Image, UnidentifiedImageError
 import tqdm
 
 from .abstractions import (
@@ -83,52 +80,27 @@ class WebPCodec(ABC, Generic[FrameT]):
         """Validate a WebP file and return its decoded dimensions."""
 
 
-class PyAVWebPCodec(WebPCodec[VideoFrame]):
-    """WebP codec implementation backed by PyAV and libwebp."""
+class PillowWebPCodec(WebPCodec[Image.Image]):
+    """WebP codec implementation backed by Pillow."""
 
-    def decode(self, path: Path) -> DecodedImage[VideoFrame]:
-        with av.open(str(path)) as container:
-            if not container.streams.video:
-                raise ValueError("file has no video stream")
-
-            stream = container.streams.video[0]
-            is_webp = stream.codec_context.name == "webp"
-            frames = container.decode(stream)
-            first = next(frames)
-            try:
-                next(frames)
-            except StopIteration:
-                is_multi_frame = False
-            else:
-                is_multi_frame = True
-
+    def decode(self, path: Path) -> DecodedImage[Image.Image]:
+        with Image.open(path) as image:
+            image.seek(0)
             return DecodedImage(
-                frame=first,
-                dimensions=(first.width, first.height),
-                is_webp=is_webp,
-                is_multi_frame=is_multi_frame,
+                frame=image.copy(),
+                dimensions=image.size,
+                is_webp=image.format == "WEBP",
+                is_multi_frame=getattr(image, "n_frames", 1) > 1,
             )
 
-    def encode(self, frame: VideoFrame, destination: Path, quality: int) -> None:
-        frame = frame.reformat(format="bgra")
-        with av.open(str(destination), mode="w", format="webp") as container:
-            stream = cast(VideoStream, container.add_stream("libwebp"))
-            stream.width = frame.width
-            stream.height = frame.height
-            stream.pix_fmt = "bgra"
-            stream.codec_context.options = {"quality": str(quality)}
-
-            for packet in stream.encode(frame):
-                container.mux(packet)
-            for packet in stream.encode(None):
-                container.mux(packet)
+    def encode(self, frame: Image.Image, destination: Path, quality: int) -> None:
+        frame.save(destination, format="WEBP", quality=quality)
 
     def dimensions(self, path: Path) -> tuple[int, int]:
-        with av.open(str(path)) as container:
-            frame = next(container.decode(video=0))
-            if container.streams.video[0].codec_context.name != "webp":
+        with Image.open(path) as image:
+            if image.format != "WEBP":
                 raise ValueError("encoded file is not WebP")
-            return frame.width, frame.height
+            return image.size
 
 
 class WebPDirectoryConverter(Generic[FrameT]):
@@ -172,7 +144,7 @@ class WebPDirectoryConverter(Generic[FrameT]):
     ) -> WebPConversion | WebPSkip | None:
         try:
             result = self._convert_file(path, options)
-        except (FFmpegError, OSError, StopIteration, ValueError):
+        except (UnidentifiedImageError, OSError, StopIteration, ValueError):
             # Directory scans commonly include non-images and unsupported files.
             return None
 
@@ -269,5 +241,5 @@ def convert_directory_to_webp(
     use fewer bytes. Existing destination paths are never overwritten.
     """
 
-    converter = WebPDirectoryConverter(PyAVWebPCodec())
+    converter = WebPDirectoryConverter(PillowWebPCodec())
     return converter.convert(Path(directory), quality=quality, replace=replace)

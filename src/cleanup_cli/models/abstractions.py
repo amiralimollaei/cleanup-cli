@@ -11,8 +11,7 @@ import tempfile
 from typing import Generic, Protocol, TypeVar
 
 import tqdm
-
-from av.error import FFmpegError
+from PIL import UnidentifiedImageError
 
 from .path_sort import sort_numbered_paths
 
@@ -125,13 +124,8 @@ class PathFilter(Protocol):
         ...
 
 
-#: Still-image extensions decodable by the Av/ffmpeg image demuxers. The set
-#: mirrors the still-image formats ffmpeg exposes (``*_pipe`` demuxers plus
-#: dedicated image containers). Animated or multi-frame formats (``gif``,
-#: ``webp``, ``tiff``) are intentionally included: the analyzers and
-#: converters skip or reject them downstream. The filter exists only to keep
-#: large *videos* out of the decode path entirely, where opening them to
-#: discover "not an image" can exhaust memory.
+#: Common still-image extensions supported by Pillow. Animated formats remain
+#: included because Pillow can decode their first frame for image analysis.
 IMAGE_EXTENSIONS: frozenset[str] = frozenset(
     {
         ".jpg",
@@ -251,7 +245,7 @@ class RecursiveDirectoryIndexer(DirectoryIndexer[ValueT]):
         *,
         scanner: DirectoryScanner | None = None,
         orderer: PathOrderer | None = None,
-        ignored_errors: tuple[type[Exception], ...] = (FFmpegError, EOFError, StopIteration, ValueError, IndexError),
+        ignored_errors: tuple[type[Exception], ...] = (UnidentifiedImageError, OSError, EOFError, StopIteration, ValueError, IndexError),
     ) -> None:
         self._analyzer = analyzer
         if scanner is not None and orderer is not None:

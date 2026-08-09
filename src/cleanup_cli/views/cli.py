@@ -7,8 +7,6 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol, TextIO
 
-from av.error import FFmpegError
-
 from ..controllers import (
     Controller,
     DeduplicationController,
@@ -24,10 +22,10 @@ from ..models.image_duplicates import (
     DirectoryDeduplicator,
     ImageSignature,
     ImageSignatureDistance,
-    PyAVImageSignatureAnalyzer,
+    PillowImageSignatureAnalyzer,
     ReverseDuplicateDetector,
 )
-from ..models.image_webp import PyAVWebPCodec, WebPDirectoryConverter, WebPOptions
+from ..models.image_webp import PillowWebPCodec, WebPDirectoryConverter, WebPOptions
 
 
 class CliView(Protocol):
@@ -132,7 +130,7 @@ def create_cli_view(*, output: TextIO | None = None) -> ArgparseCliView:
     """Compose the production models, controllers, and CLI view."""
 
     indexer = RecursiveDirectoryIndexer(
-        PyAVImageSignatureAnalyzer(),
+        PillowImageSignatureAnalyzer(),
         scanner=ImageDirectoryScanner(),
     )
     deduplicator = DirectoryDeduplicator(
@@ -140,7 +138,7 @@ def create_cli_view(*, output: TextIO | None = None) -> ArgparseCliView:
         ReverseDuplicateDetector[ImageSignature](ImageSignatureDistance()),
     )
     deduplication_controller = DeduplicationController(deduplicator)
-    webp_controller = WebPConversionController(WebPDirectoryConverter(PyAVWebPCodec()))
+    webp_controller = WebPConversionController(WebPDirectoryConverter(PillowWebPCodec()))
     return ArgparseCliView(
         deduplication_controller,
         webp_controller,

@@ -21,7 +21,7 @@ from .image_duplicates import (
     ImageSignature,
     ImageSignatureDistance,
     LocalFileRemover,
-    PyAVImageSignatureAnalyzer,
+    PillowImageSignatureAnalyzer,
     ReverseDuplicateDetector,
     deduplicate_directory,
     find_duplicates,
@@ -32,7 +32,7 @@ from .image_duplicates import (
 )
 from .image_webp import (
     DecodedImage,
-    PyAVWebPCodec,
+    PillowWebPCodec,
     WebPCodec,
     WebPConversion,
     WebPDirectoryConverter,
@@ -60,8 +60,8 @@ __all__ = [
     "LocalFileRemover",
     "NaturalPathOrderer",
     "PathOrderer",
-    "PyAVImageSignatureAnalyzer",
-    "PyAVWebPCodec",
+    "PillowImageSignatureAnalyzer",
+    "PillowWebPCodec",
     "RecursiveDirectoryIndexer",
     "RecursiveDirectoryScanner",
     "ReverseDuplicateDetector",

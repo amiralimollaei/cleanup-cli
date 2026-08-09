@@ -5,12 +5,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from functools import lru_cache
 from pathlib import Path
 from typing import Generic, Protocol, TypeVar
 
-import av
 import numpy as np
+from PIL import Image
+from scipy.fft import dctn
 from numpy.typing import NDArray
 
 from .abstractions import (
@@ -60,38 +60,21 @@ class ImageSignature:
     average_rgb: tuple[int, int, int]
 
 
-@lru_cache(maxsize=None)
-def _dct_matrix(size: int) -> NDArray[np.float64]:
-    """Return an orthonormal DCT-II transform matrix."""
-
-    positions = np.arange(size, dtype=np.float64)
-    frequencies = positions[:, np.newaxis]
-    matrix = np.cos(np.pi * (positions + 0.5) * frequencies / size)
-    matrix[0] *= np.sqrt(1.0 / size)
-    matrix[1:] *= np.sqrt(2.0 / size)
-    return matrix
-
-@lru_cache(maxsize=None)
 def _load_normalized(path: Path) -> tuple[NDArray[np.float64], NDArray[np.uint8]]:
     """Decode the first image frame into normalized grayscale and RGB arrays."""
 
-    with av.open(str(path)) as container:
-        frame = next(container.decode(video=0))
-        grayscale = frame.reformat(
-            width=PHASH_SIZE,
-            height=PHASH_SIZE,
-            format="gray",
+    with Image.open(path) as image:
+        image.seek(0)
+        normalized = image.convert("RGB").resize(
+            (PHASH_SIZE, PHASH_SIZE), Image.Resampling.LANCZOS
         )
-        rgb = frame.reformat(width=PHASH_SIZE, height=PHASH_SIZE, format="rgb24")
-        return (
-            grayscale.to_ndarray().astype(np.float64, copy=False),
-            np.asarray(rgb.to_ndarray(), dtype=np.uint8),
-        )
+        rgb = np.asarray(normalized, dtype=np.uint8)
+        grayscale = np.asarray(normalized.convert("L"), dtype=np.float64)
+        return grayscale, rgb
 
 
 def _phash(pixels: NDArray[np.float64]) -> int:
-    transform = _dct_matrix(PHASH_SIZE)
-    coefficients = transform @ pixels @ transform.T
+    coefficients = dctn(pixels, type=2, norm="ortho")
     low_frequencies = coefficients[
         :PHASH_LOW_FREQUENCIES, :PHASH_LOW_FREQUENCIES
     ].ravel()
@@ -104,7 +87,7 @@ def _phash(pixels: NDArray[np.float64]) -> int:
 
 
 def perceptual_hash(path: str | Path) -> int:
-    """Calculate a 64-bit pHash for an image decoded with PyAV."""
+    """Calculate a 64-bit pHash for an image decoded with Pillow."""
 
     grayscale, _ = _load_normalized(Path(path))
     return _phash(grayscale)
@@ -123,8 +106,8 @@ def image_signature(path: str | Path) -> ImageSignature:
     return ImageSignature(_phash(grayscale), average_rgb)
 
 
-class PyAVImageSignatureAnalyzer:
-    """Build image signatures using PyAV decoding and NumPy transforms."""
+class PillowImageSignatureAnalyzer:
+    """Build image signatures using Pillow, NumPy, and SciPy transforms."""
 
     def analyze(self, path: Path) -> ImageSignature:
         return image_signature(path)
@@ -277,7 +260,7 @@ class ImageIndexAdapter(DirectoryIndexer[int | ImageSignature]):
 
     def index(self, directory: Path) -> list[IndexedFile[int | ImageSignature]]:
         indexer = RecursiveDirectoryIndexer[int | ImageSignature](
-            PyAVImageSignatureAnalyzer(),
+            PillowImageSignatureAnalyzer(),
             scanner=ImageDirectoryScanner(),
         )
         return indexer.index(directory)
@@ -292,7 +275,7 @@ def index_images(directory: str | Path) -> list[tuple[Path, ImageSignature]]:
     """Recursively hash decodable images in natural path order."""
 
     indexer = RecursiveDirectoryIndexer(
-        PyAVImageSignatureAnalyzer(),
+        PillowImageSignatureAnalyzer(),
         scanner=ImageDirectoryScanner(),
     )
     return [(image.path, image.value) for image in indexer.index(Path(directory))]

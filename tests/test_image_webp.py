@@ -1,10 +1,7 @@
 from pathlib import Path
-from typing import cast
-
-import av
 import numpy as np
 import pytest
-from av.video.stream import VideoStream
+from PIL import Image
 
 from cleanup_cli import convert_directory_to_webp
 from cleanup_cli.models.image_webp import (
@@ -29,16 +26,7 @@ def _write_webp(path: Path, size: tuple[int, int] = (32, 24)) -> None:
     pixels = np.zeros((height, width, 4), dtype=np.uint8)
     pixels[..., 0] = 200
     pixels[..., 3] = 255
-    frame = av.VideoFrame.from_ndarray(pixels, format="rgba").reformat(format="bgra")
-    with av.open(str(path), mode="w", format="webp") as container:
-        stream = cast(VideoStream, container.add_stream("libwebp"))
-        stream.width = width
-        stream.height = height
-        stream.pix_fmt = "bgra"
-        for packet in stream.encode(frame):
-            container.mux(packet)
-        for packet in stream.encode(None):
-            container.mux(packet)
+    Image.fromarray(pixels, mode="RGBA").save(path, format="WEBP")
 
 
 def test_converts_recursively_in_place_without_changing_dimensions(tmp_path: Path) -> None:
@@ -55,10 +43,9 @@ def test_converts_recursively_in_place_without_changing_dimensions(tmp_path: Pat
     assert len(conversions) == 1
     assert not source.exists()
     assert destination.stat().st_size < original_size
-    with av.open(str(destination)) as container:
-        frame = next(container.decode(video=0))
-        assert container.streams.video[0].codec_context.name == "webp"
-        assert (frame.width, frame.height) == (128, 96)
+    with Image.open(destination) as image:
+        assert image.format == "WEBP"
+        assert image.size == (128, 96)
 
 
 def test_skips_existing_webp_and_non_images(tmp_path: Path) -> None:
