@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import os
 import tempfile
+import warnings
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, TypeVar
 
-from PIL import Image, UnidentifiedImageError
 import tqdm
+from PIL import Image, UnidentifiedImageError
 
 from .abstractions import (
     DirectoryScanner,
@@ -88,14 +89,16 @@ class PillowWebPCodec(WebPCodec[Image.Image]):
     """WebP codec implementation backed by Pillow."""
 
     def decode(self, path: Path) -> DecodedImage[Image.Image]:
-        with Image.open(path) as image:
-            image.seek(0)
-            return DecodedImage(
-                frame=image.copy(),
-                dimensions=image.size,
-                is_webp=image.format == "WEBP",
-                is_multi_frame=getattr(image, "n_frames", 1) > 1,
-            )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(path) as image:
+                image.seek(0)
+                return DecodedImage(
+                    frame=image.copy(),
+                    dimensions=image.size,
+                    is_webp=image.format == "WEBP",
+                    is_multi_frame=getattr(image, "n_frames", 1) > 1,
+                )
 
     def encode(self, frame: Image.Image, destination: Path, quality: int) -> None:
         frame.save(destination, format="WEBP", quality=quality)
@@ -160,7 +163,13 @@ class WebPDirectoryConverter(Generic[FrameT]):
     ) -> WebPConversion | WebPSkip | None:
         try:
             result = self._convert_file(path, options)
-        except (UnidentifiedImageError, OSError, StopIteration, ValueError):
+        except (
+            UnidentifiedImageError,
+            OSError,
+            StopIteration,
+            ValueError,
+            Image.DecompressionBombWarning,
+        ):
             # Directory scans commonly include non-images and unsupported files.
             return None
 

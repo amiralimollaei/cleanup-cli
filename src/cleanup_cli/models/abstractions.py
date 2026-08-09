@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
@@ -11,7 +12,7 @@ import tempfile
 from typing import Generic, Protocol, TypeVar
 
 import tqdm
-from PIL import UnidentifiedImageError
+from PIL import Image, UnidentifiedImageError
 
 from .path_sort import sort_numbered_paths
 
@@ -181,7 +182,9 @@ class DirectoryIndexer(ABC, Generic[ValueT]):
     """Abstract source of analyzed files from a directory."""
 
     @abstractmethod
-    def index(self, directory: Path) -> list[IndexedFile[ValueT]]:
+    def index(
+        self, directory: Path, *, max_workers: int | None = None
+    ) -> list[IndexedFile[ValueT]]:
         """Return analyzed files from *directory* in a stable order."""
 
 
@@ -245,7 +248,15 @@ class RecursiveDirectoryIndexer(DirectoryIndexer[ValueT]):
         *,
         scanner: DirectoryScanner | None = None,
         orderer: PathOrderer | None = None,
-        ignored_errors: tuple[type[Exception], ...] = (UnidentifiedImageError, OSError, EOFError, StopIteration, ValueError, IndexError),
+        ignored_errors: tuple[type[Exception], ...] = (
+            UnidentifiedImageError,
+            OSError,
+            EOFError,
+            StopIteration,
+            ValueError,
+            IndexError,
+            Image.DecompressionBombWarning,
+        ),
     ) -> None:
         self._analyzer = analyzer
         if scanner is not None and orderer is not None:
@@ -253,18 +264,27 @@ class RecursiveDirectoryIndexer(DirectoryIndexer[ValueT]):
         self._scanner = scanner or RecursiveDirectoryScanner(orderer)
         self._ignored_errors = ignored_errors
 
-    def index(self, directory: Path) -> list[IndexedFile[ValueT]]:
+    def index(
+        self, directory: Path, *, max_workers: int | None = None
+    ) -> list[IndexedFile[ValueT]]:
         indexed: list[IndexedFile[ValueT]] = []
-        for path in tqdm.tqdm(list(self._scanner.scan(directory)), desc=f"indexing {directory}", unit="file"):
-            try:
-                identity = file_identity(path)
-                value = self._analyzer.analyze(path)
-                # Never retain an analysis of a file that changed while being
-                # read; a later destructive operation must target this exact
-                # snapshot rather than merely the same pathname.
-                if file_identity(path) != identity:
-                    continue
-                indexed.append(IndexedFile(path, value, identity))
-            except self._ignored_errors:
-                continue
+        paths = list(self._scanner.scan(directory))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            results = executor.map(self._index_file_safely, paths)
+            for result in tqdm.tqdm(
+                results, total=len(paths), desc=f"indexing {directory}", unit="file"
+            ):
+                if result is not None:
+                    indexed.append(result)
         return indexed
+
+    def _index_file_safely(self, path: Path) -> IndexedFile[ValueT] | None:
+        try:
+            identity = file_identity(path)
+            value = self._analyzer.analyze(path)
+            # Never retain an analysis of a file that changed while being read.
+            if file_identity(path) != identity:
+                return None
+            return IndexedFile(path, value, identity)
+        except self._ignored_errors:
+            return None

@@ -1,4 +1,6 @@
 from pathlib import Path
+from threading import Lock
+from time import sleep
 
 import pytest
 
@@ -99,6 +101,39 @@ def test_recursive_indexer_rejects_non_directory(tmp_path: Path) -> None:
 
     with pytest.raises(NotADirectoryError):
         indexer.index(tmp_path / "missing")
+
+
+def test_recursive_indexer_analyzes_files_in_parallel_and_preserves_order(
+    tmp_path: Path,
+) -> None:
+    active = 0
+    maximum_active = 0
+    lock = Lock()
+
+    class Scanner:
+        def scan(self, directory: Path) -> list[Path]:
+            return [tmp_path / f"{index}.bin" for index in range(4)]
+
+    class Analyzer:
+        def analyze(self, path: Path) -> int:
+            nonlocal active, maximum_active
+            with lock:
+                active += 1
+                maximum_active = max(maximum_active, active)
+            sleep(0.03)
+            with lock:
+                active -= 1
+            return int(path.stem)
+
+    paths = [tmp_path / f"{index}.bin" for index in range(4)]
+    for path in paths:
+        path.write_bytes(b"image")
+    indexer = RecursiveDirectoryIndexer(Analyzer(), scanner=Scanner())
+
+    indexed = indexer.index(tmp_path, max_workers=4)
+
+    assert maximum_active > 1
+    assert [item.path for item in indexed] == paths
 
 
 def test_duplicate_detector_uses_injected_generic_distance_metric() -> None:

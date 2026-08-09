@@ -80,7 +80,11 @@ class ArgparseCliView:
         try:
             request = DeduplicationRequest(
                 args.directory,
-                DeduplicationOptions(threshold=args.threshold, delete=args.delete),
+                DeduplicationOptions(
+                    threshold=args.threshold,
+                    delete=args.delete,
+                    max_workers=args.max_workers,
+                ),
             )
             result = self._deduplication.execute(request)
         except (NotADirectoryError, ValueError) as error:
@@ -206,6 +210,13 @@ def _add_duplicate_arguments(parser: argparse.ArgumentParser) -> None:
         "--delete",
         action="store_true",
         help="delete duplicates; without this flag, only show a dry run",
+    )
+    parser.add_argument(
+        "--max-workers",
+        type=_positive_int,
+        default=None,
+        metavar="N",
+        help="maximum number of worker threads for image hashing (default: executor default)",
     )
 
 

@@ -1,7 +1,9 @@
 from pathlib import Path
+import warnings
 
 import numpy as np
 import pytest
+from PIL import Image
 
 from cleanup_cli import (
     deduplicate_directory,
@@ -162,6 +164,23 @@ def test_indexes_recursively_in_natural_order_and_skips_non_images(
     (tmp_path / "notes.txt").write_text("not an image")
 
     assert [path for path, _ in index_images(tmp_path)] == [earlier, later]
+
+
+def test_oversized_images_are_skipped_without_decompression_bomb_warning(
+    tmp_path: Path,
+) -> None:
+    oversized = tmp_path / "oversized.pgm"
+    # The header is sufficient for Pillow to detect the pixel count. No pixel
+    # payload is needed because the file must be rejected before decoding.
+    oversized.write_bytes(b"P5\n20001 10000\n255\n")
+
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter("always")
+        assert index_images(tmp_path) == []
+
+    assert not any(
+        warning.category is Image.DecompressionBombWarning for warning in emitted
+    )
 
 
 def test_dry_run_keeps_files_and_delete_removes_only_earlier_match(

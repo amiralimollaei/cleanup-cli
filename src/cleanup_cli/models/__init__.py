@@ -1,5 +1,8 @@
 """Domain models and reusable infrastructure abstractions."""
 
+# Configure Pillow before importing any model that opens an image.
+from . import image_limits as _image_limits  # noqa: F401
+
 from .abstractions import (
     DirectoryIndexer,
     DirectoryScanner,

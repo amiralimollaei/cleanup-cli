@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Generic, Protocol, TypeVar
+import warnings
 
 import numpy as np
 from numpy.typing import NDArray
@@ -52,9 +53,12 @@ class DeduplicationOptions:
 
     threshold: int = 0
     delete: bool = False
+    max_workers: int | None = None
 
     def __post_init__(self) -> None:
         _validate_threshold(self.threshold)
+        if self.max_workers is not None and self.max_workers < 1:
+            raise ValueError("max_workers must be greater than 0")
 
 
 @dataclass(frozen=True)
@@ -80,14 +84,20 @@ def _dct_matrix(size: int) -> NDArray[np.float64]:
 def _load_normalized(path: Path) -> tuple[NDArray[np.float64], NDArray[np.uint8]]:
     """Decode the first image frame into normalized grayscale and RGB arrays."""
 
-    with Image.open(path) as image:
-        image.seek(0)
-        normalized = image.convert("RGB").resize(
-            (PHASH_SIZE, PHASH_SIZE), Image.Resampling.LANCZOS
-        )
-        rgb = np.asarray(normalized, dtype=np.uint8)
-        grayscale = np.asarray(normalized.convert("L"), dtype=np.float64)
-        return grayscale, rgb
+    # Pillow warns once an image exceeds its decompression-bomb threshold.
+    # This application intentionally decodes untrusted directory contents, so
+    # turn that warning into a normal unsupported-image error instead of
+    # allowing a potentially enormous image to be expanded in memory.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", Image.DecompressionBombWarning)
+        with Image.open(path) as image:
+            image.seek(0)
+            normalized = image.convert("RGB").resize(
+                (PHASH_SIZE, PHASH_SIZE), Image.Resampling.LANCZOS
+            )
+            rgb = np.asarray(normalized, dtype=np.uint8)
+            grayscale = np.asarray(normalized.convert("L"), dtype=np.float64)
+            return grayscale, rgb
 
 
 def _dct_2d(pixels: NDArray[np.float64]) -> NDArray[np.float64]:
@@ -269,7 +279,10 @@ class DirectoryDeduplicator(Generic[SignatureT]):
         options: DeduplicationOptions | None = None,
     ) -> list[Duplicate]:
         request = options or DeduplicationOptions()
-        images = self._indexer.index(directory)
+        if request.max_workers is None:
+            images = self._indexer.index(directory)
+        else:
+            images = self._indexer.index(directory, max_workers=request.max_workers)
         duplicates = self._detector.find(images, request.threshold)
 
         if request.delete:
@@ -286,12 +299,14 @@ class DirectoryDeduplicator(Generic[SignatureT]):
 class ImageIndexAdapter(DirectoryIndexer[int | ImageSignature]):
     """Expose the tuple-based image index API through the model contract."""
 
-    def index(self, directory: Path) -> list[IndexedFile[int | ImageSignature]]:
+    def index(
+        self, directory: Path, *, max_workers: int | None = None
+    ) -> list[IndexedFile[int | ImageSignature]]:
         indexer = RecursiveDirectoryIndexer[int | ImageSignature](
             PillowImageSignatureAnalyzer(),
             scanner=ImageDirectoryScanner(),
         )
-        return indexer.index(directory)
+        return indexer.index(directory, max_workers=max_workers)
 
 
 def _validate_threshold(threshold: int) -> None:
@@ -299,14 +314,19 @@ def _validate_threshold(threshold: int) -> None:
         raise ValueError(f"threshold must be between 0 and {PHASH_BITS}")
 
 
-def index_images(directory: str | Path) -> list[tuple[Path, ImageSignature]]:
+def index_images(
+    directory: str | Path, *, max_workers: int | None = None
+) -> list[tuple[Path, ImageSignature]]:
     """Recursively hash decodable images in natural path order."""
 
     indexer = RecursiveDirectoryIndexer(
         PillowImageSignatureAnalyzer(),
         scanner=ImageDirectoryScanner(),
     )
-    return [(image.path, image.value) for image in indexer.index(Path(directory))]
+    return [
+        (image.path, image.value)
+        for image in indexer.index(Path(directory), max_workers=max_workers)
+    ]
 
 
 def find_duplicates(
@@ -325,7 +345,11 @@ def find_duplicates(
 
 
 def deduplicate_directory(
-    directory: str | Path, *, threshold: int = 0, delete: bool = False
+    directory: str | Path,
+    *,
+    threshold: int = 0,
+    delete: bool = False,
+    max_workers: int | None = None,
 ) -> list[Duplicate]:
     """Find duplicates recursively and optionally delete earlier paths."""
 
@@ -333,5 +357,7 @@ def deduplicate_directory(
         ImageIndexAdapter(),
         ReverseDuplicateDetector(ImageSignatureDistance()),
     )
-    options = DeduplicationOptions(threshold=threshold, delete=delete)
+    options = DeduplicationOptions(
+        threshold=threshold, delete=delete, max_workers=max_workers
+    )
     return model.deduplicate(Path(directory), options)
