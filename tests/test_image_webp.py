@@ -143,6 +143,12 @@ def test_rejects_invalid_quality(tmp_path: Path, quality: int) -> None:
         convert_directory_to_webp(tmp_path, quality=quality)
 
 
+@pytest.mark.parametrize("max_workers", [0, -1])
+def test_rejects_invalid_worker_count(tmp_path: Path, max_workers: int) -> None:
+    with pytest.raises(ValueError, match="max_workers must be greater than 0"):
+        convert_directory_to_webp(tmp_path, max_workers=max_workers)
+
+
 def test_converts_files_in_parallel_and_preserves_scan_order(tmp_path: Path) -> None:
     active = 0
     maximum_active = 0

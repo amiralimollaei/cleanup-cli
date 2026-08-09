@@ -94,5 +94,6 @@ class WebPConversionController(
             request.directory,
             quality=request.options.quality,
             replace=request.options.replace,
+            max_workers=request.options.max_workers,
         )
         return WebPConversionResult(tuple(conversions), tuple(skips))

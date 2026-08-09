@@ -49,10 +49,13 @@ class WebPOptions:
 
     quality: int = 80
     replace: bool = False
+    max_workers: int | None = None
 
     def __post_init__(self) -> None:
         if not 0 <= self.quality <= 100:
             raise ValueError("quality must be between 0 and 100")
+        if self.max_workers is not None and self.max_workers < 1:
+            raise ValueError("max_workers must be greater than 0")
 
 
 @dataclass(frozen=True)
@@ -126,7 +129,7 @@ class WebPDirectoryConverter(Generic[FrameT]):
         replace: bool = False,
         max_workers: int | None = None,
     ) -> tuple[list[WebPConversion], list[WebPSkip]]:
-        options = WebPOptions(quality, replace)
+        options = WebPOptions(quality, replace, max_workers)
 
         conversions: list[WebPConversion] = []
         skips: list[WebPSkip] = []

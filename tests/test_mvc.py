@@ -2,6 +2,8 @@ from io import StringIO
 from pathlib import Path
 from typing import Generic, TypeVar
 
+import pytest
+
 from cleanup_cli.controllers import (
     Controller,
     DeduplicationController,
@@ -100,17 +102,30 @@ def test_cli_view_builds_webp_request_and_renders_result() -> None:
     output = StringIO()
     view = ArgparseCliView(duplicate_controller, webp_controller, output=output)
 
-    exit_code = view.run(["webp", "/photos", "--quality", "90", "--replace"])
+    exit_code = view.run(
+        ["webp", "/photos", "--quality", "90", "--replace", "--max-workers", "3"]
+    )
 
     assert exit_code == 0
     assert webp_controller.requests == [
-        WebPConversionRequest(Path("/photos"), WebPOptions(quality=90, replace=True))
+        WebPConversionRequest(
+            Path("/photos"), WebPOptions(quality=90, replace=True, max_workers=3)
+        )
     ]
     assert output.getvalue().splitlines() == [
         "converted: photo.png -> photo.webp (saved 60 bytes)",
         "skipped: small.png (WebP would not be smaller)",
         "1 image(s) converted, 1 image(s) skipped",
     ]
+
+
+def test_cli_view_rejects_non_positive_webp_worker_count() -> None:
+    duplicate_controller = RecordingController(DeduplicationResult((), False))
+    webp_controller = RecordingController(WebPConversionResult((), ()))
+    view = ArgparseCliView(duplicate_controller, webp_controller, output=StringIO())
+
+    with pytest.raises(SystemExit):
+        view.run(["webp", "/photos", "--max-workers", "0"])
 
 
 def test_cli_view_preserves_legacy_directory_command() -> None:

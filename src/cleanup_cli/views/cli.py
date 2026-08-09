@@ -103,7 +103,11 @@ class ArgparseCliView:
         try:
             request = WebPConversionRequest(
                 args.directory,
-                WebPOptions(quality=args.quality, replace=args.replace),
+                WebPOptions(
+                    quality=args.quality,
+                    replace=args.replace,
+                    max_workers=args.max_workers,
+                ),
             )
             result = self._webp.execute(request)
         except (NotADirectoryError, ValueError) as error:
@@ -179,6 +183,13 @@ def _build_parser() -> tuple[
         action="store_true",
         help="replace originals; without this flag, only validate a dry run",
     )
+    webp_parser.add_argument(
+        "--max-workers",
+        type=_positive_int,
+        default=None,
+        metavar="N",
+        help="maximum number of worker threads (default: executor default)",
+    )
     return parser, duplicate_parser, webp_parser
 
 
@@ -196,3 +207,10 @@ def _add_duplicate_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="delete duplicates; without this flag, only show a dry run",
     )
+
+
+def _positive_int(value: str) -> int:
+    workers = int(value)
+    if workers < 1:
+        raise argparse.ArgumentTypeError("must be greater than 0")
+    return workers
