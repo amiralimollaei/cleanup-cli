@@ -392,11 +392,11 @@ def find_duplicates(
 ) -> list[Duplicate]:
     """Choose duplicates while retaining the highest-quality matching image.
 
-    The reverse scan compares each image only with later paths that will
-    actually be retained. Quality is ranked by resolution, then file size; the
-    last naturally sorted path wins if both values tie. This avoids deleting
-    through a non-transitive chain where A matches B and B matches C, but A
-    does not match C.
+    Images are ranked by quality and each candidate is compared only with
+    higher-quality images that will actually be retained. The last naturally
+    sorted path wins if resolution and file size both tie. This avoids
+    deleting through a non-transitive chain where A matches B and B matches C,
+    but A does not match C.
     """
 
     indexed = [IndexedFile(path, signature) for path, signature in images]

@@ -10,7 +10,6 @@ from cleanup_cli.controllers import (
     DeduplicationRequest,
     DeduplicationResult,
     WebPConversionRequest,
-    WebPConversionResult,
 )
 from cleanup_cli.models import (
     DeduplicationOptions,
@@ -18,8 +17,9 @@ from cleanup_cli.models import (
     DirectoryIndexer,
     Duplicate,
     IndexedFile,
-    ReverseDuplicateDetector,
+    QualityAwareDuplicateDetector,
     WebPConversion,
+    WebPDirectoryConversionResult,
     WebPOptions,
     WebPSkip,
 )
@@ -58,7 +58,7 @@ class IntegerDistance:
 def test_deduplication_controller_returns_immutable_view_model(tmp_path: Path) -> None:
     model = DirectoryDeduplicator(
         StaticIndexer(),
-        ReverseDuplicateDetector(IntegerDistance()),
+        QualityAwareDuplicateDetector(IntegerDistance()),
     )
     controller = DeduplicationController(model)
 
@@ -75,7 +75,7 @@ def test_cli_view_builds_deduplication_request_and_renders_result() -> None:
     duplicate_controller = RecordingController(
         DeduplicationResult((duplicate,), deleted=False)
     )
-    webp_controller = RecordingController(WebPConversionResult((), ()))
+    webp_controller = RecordingController(WebPDirectoryConversionResult((), ()))
     output = StringIO()
     view = ArgparseCliView(duplicate_controller, webp_controller, output=output)
 
@@ -102,7 +102,7 @@ def test_cli_view_builds_webp_request_and_renders_result() -> None:
         Path("photo.png"), Path("photo.webp"), original_size=100, webp_size=40
     )
     skip = WebPSkip(Path("small.png"), "WebP would not be smaller")
-    webp_controller = RecordingController(WebPConversionResult((conversion,), (skip,)))
+    webp_controller = RecordingController(WebPDirectoryConversionResult((conversion,), (skip,)))
     output = StringIO()
     view = ArgparseCliView(duplicate_controller, webp_controller, output=output)
 
@@ -125,7 +125,7 @@ def test_cli_view_builds_webp_request_and_renders_result() -> None:
 
 def test_cli_view_rejects_non_positive_webp_worker_count() -> None:
     duplicate_controller = RecordingController(DeduplicationResult((), False))
-    webp_controller = RecordingController(WebPConversionResult((), ()))
+    webp_controller = RecordingController(WebPDirectoryConversionResult((), ()))
     view = ArgparseCliView(duplicate_controller, webp_controller, output=StringIO())
 
     with pytest.raises(SystemExit):
@@ -134,7 +134,7 @@ def test_cli_view_rejects_non_positive_webp_worker_count() -> None:
 
 def test_cli_view_preserves_legacy_directory_command() -> None:
     duplicate_controller = RecordingController(DeduplicationResult((), False))
-    webp_controller = RecordingController(WebPConversionResult((), ()))
+    webp_controller = RecordingController(WebPDirectoryConversionResult((), ()))
     view = ArgparseCliView(duplicate_controller, webp_controller, output=StringIO())
 
     view.run(["/photos", "--delete"])

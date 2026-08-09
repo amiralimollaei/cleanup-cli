@@ -6,8 +6,8 @@ import argparse
 from pathlib import Path
 from typing import TextIO
 
-from ...controllers import Controller, WebPConversionRequest, WebPConversionResult
-from ...models.image_webp import WebPOptions
+from ...controllers import Controller, WebPConversionRequest
+from ...models.image_webp import WebPDirectoryConversionResult, WebPOptions
 from .arguments import positive_int
 
 
@@ -19,7 +19,7 @@ class WebPCommand:
 
     def __init__(
         self,
-        controller: Controller[WebPConversionRequest, WebPConversionResult],
+        controller: Controller[WebPConversionRequest, WebPDirectoryConversionResult],
         *,
         output: TextIO | None = None,
     ) -> None:

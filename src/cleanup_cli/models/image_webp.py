@@ -45,6 +45,14 @@ class WebPSkip:
 
 
 @dataclass(frozen=True)
+class WebPDirectoryConversionResult:
+    """All conversions and skips produced by one directory operation."""
+
+    conversions: tuple[WebPConversion, ...]
+    skips: tuple[WebPSkip, ...]
+
+
+@dataclass(frozen=True)
 class WebPOptions:
     """Validated options for a directory WebP conversion."""
 
@@ -131,7 +139,7 @@ class WebPDirectoryConverter(Generic[FrameT]):
         quality: int = 80,
         replace: bool = False,
         max_workers: int | None = None,
-    ) -> tuple[list[WebPConversion], list[WebPSkip]]:
+    ) -> WebPDirectoryConversionResult:
         options = WebPOptions(quality, replace, max_workers)
 
         conversions: list[WebPConversion] = []
@@ -154,7 +162,7 @@ class WebPDirectoryConverter(Generic[FrameT]):
                 elif result is not None:
                     skips.append(result)
 
-        return conversions, skips
+        return WebPDirectoryConversionResult(tuple(conversions), tuple(skips))
 
     def _convert_file_safely(
         self,
@@ -259,7 +267,7 @@ def convert_directory_to_webp(
     quality: int = 80,
     replace: bool = False,
     max_workers: int | None = None,
-) -> tuple[list[WebPConversion], list[WebPSkip]]:
+) -> WebPDirectoryConversionResult:
     """Recursively replace images with smaller, equally sized WebP files.
 
     Non-images and existing WebP images are ignored. A source is removed only

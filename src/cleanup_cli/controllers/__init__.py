@@ -7,7 +7,6 @@ from .core import (
     DeduplicationResult,
     WebPConversionController,
     WebPConversionRequest,
-    WebPConversionResult,
 )
 
 __all__ = [
@@ -17,5 +16,4 @@ __all__ = [
     "DeduplicationResult",
     "WebPConversionController",
     "WebPConversionRequest",
-    "WebPConversionResult",
 ]

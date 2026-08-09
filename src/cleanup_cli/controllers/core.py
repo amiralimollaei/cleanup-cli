@@ -13,10 +13,9 @@ from ..models.image_duplicates import (
     Duplicate,
 )
 from ..models.image_webp import (
-    WebPConversion,
     WebPDirectoryConverter,
+    WebPDirectoryConversionResult,
     WebPOptions,
-    WebPSkip,
 )
 
 
@@ -72,16 +71,8 @@ class WebPConversionRequest:
     options: WebPOptions = field(default_factory=WebPOptions)
 
 
-@dataclass(frozen=True)
-class WebPConversionResult:
-    """View-independent result of a WebP conversion operation."""
-
-    conversions: tuple[WebPConversion, ...]
-    skips: tuple[WebPSkip, ...]
-
-
 class WebPConversionController(
-    Controller[WebPConversionRequest, WebPConversionResult],
+    Controller[WebPConversionRequest, WebPDirectoryConversionResult],
     Generic[FrameT],
 ):
     """Coordinate WebP model operations for any view."""
@@ -89,11 +80,10 @@ class WebPConversionController(
     def __init__(self, model: WebPDirectoryConverter[FrameT]) -> None:
         self._model = model
 
-    def execute(self, request: WebPConversionRequest) -> WebPConversionResult:
-        conversions, skips = self._model.convert(
+    def execute(self, request: WebPConversionRequest) -> WebPDirectoryConversionResult:
+        return self._model.convert(
             request.directory,
             quality=request.options.quality,
             replace=request.options.replace,
             max_workers=request.options.max_workers,
         )
-        return WebPConversionResult(tuple(conversions), tuple(skips))

@@ -39,10 +39,12 @@ def test_converts_recursively_in_place_without_changing_dimensions(tmp_path: Pat
     _write_ppm(source)
     original_size = source.stat().st_size
 
-    conversions, skips = convert_directory_to_webp(tmp_path, replace=True)
+    result = convert_directory_to_webp(tmp_path, replace=True)
+    conversions = result.conversions
+    skips = result.skips
 
     destination = nested / "photo.webp"
-    assert skips == []
+    assert skips == ()
     assert len(conversions) == 1
     assert not source.exists()
     assert destination.stat().st_size < original_size
@@ -57,7 +59,9 @@ def test_skips_existing_webp_and_non_images(tmp_path: Path) -> None:
     contents = webp.read_bytes()
     (tmp_path / "notes.txt").write_text("not an image")
 
-    assert convert_directory_to_webp(tmp_path) == ([], [])
+    result = convert_directory_to_webp(tmp_path)
+    assert result.conversions == ()
+    assert result.skips == ()
     assert webp.read_bytes() == contents
 
 
@@ -77,16 +81,20 @@ def test_skips_webp_by_path_before_decoding(tmp_path: Path) -> None:
 
     converter = WebPDirectoryConverter(FailingCodec())
 
-    assert converter.convert(tmp_path, replace=True) == ([], [])
+    result = converter.convert(tmp_path, replace=True)
+    assert result.conversions == ()
+    assert result.skips == ()
 
 
 def test_keeps_source_when_webp_is_not_smaller(tmp_path: Path) -> None:
     source = tmp_path / "tiny.ppm"
     source.write_bytes(b"P6\n1 1\n255\n\xff\x00\x00")
 
-    conversions, skips = convert_directory_to_webp(tmp_path)
+    result = convert_directory_to_webp(tmp_path)
+    conversions = result.conversions
+    skips = result.skips
 
-    assert conversions == []
+    assert conversions == ()
     assert len(skips) == 1
     assert skips[0].reason == "WebP would not be smaller"
     assert source.exists()
@@ -99,9 +107,11 @@ def test_does_not_overwrite_an_existing_destination(tmp_path: Path) -> None:
     _write_ppm(source)
     destination.write_bytes(b"existing")
 
-    conversions, skips = convert_directory_to_webp(tmp_path)
+    result = convert_directory_to_webp(tmp_path)
+    conversions = result.conversions
+    skips = result.skips
 
-    assert conversions == []
+    assert conversions == ()
     assert len(skips) == 1
     assert "destination exists" in skips[0].reason
     assert source.exists()
@@ -113,9 +123,11 @@ def test_dry_run_never_replaces_source(tmp_path: Path) -> None:
     _write_ppm(source)
     original = source.read_bytes()
 
-    conversions, skips = convert_directory_to_webp(tmp_path)
+    result = convert_directory_to_webp(tmp_path)
+    conversions = result.conversions
+    skips = result.skips
 
-    assert conversions == []
+    assert conversions == ()
     assert skips[0].reason == "replacement not enabled (use --replace)"
     assert source.read_bytes() == original
     assert not source.with_suffix(".webp").exists()
@@ -129,9 +141,11 @@ def test_does_not_follow_or_overwrite_dangling_destination_symlink(
     _write_ppm(source)
     destination.symlink_to("missing.webp")
 
-    conversions, skips = convert_directory_to_webp(tmp_path, replace=True)
+    result = convert_directory_to_webp(tmp_path, replace=True)
+    conversions = result.conversions
+    skips = result.skips
 
-    assert conversions == []
+    assert conversions == ()
     assert "destination exists" in skips[0].reason
     assert source.exists()
     assert destination.is_symlink()
@@ -188,8 +202,10 @@ def test_converts_files_in_parallel_and_preserves_scan_order(tmp_path: Path) -> 
         TrackingCodec(), scanner=Scanner(sources), max_workers=4
     )
 
-    conversions, skips = converter.convert(tmp_path, replace=True)
+    result = converter.convert(tmp_path, replace=True)
+    conversions = result.conversions
+    skips = result.skips
 
     assert [conversion.source for conversion in conversions] == sources
-    assert skips == []
+    assert skips == ()
     assert maximum_active > 1

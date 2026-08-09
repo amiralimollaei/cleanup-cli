@@ -12,7 +12,7 @@ from cleanup_cli import (
     ImageDirectoryScanner,
     IndexedFile,
     RecursiveDirectoryIndexer,
-    ReverseDuplicateDetector,
+    QualityAwareDuplicateDetector,
     WebPCodec,
     WebPDirectoryConverter,
     WebPOptions,
@@ -144,7 +144,7 @@ def test_duplicate_detector_uses_injected_generic_distance_metric() -> None:
         IndexedFile(Path("2.txt"), 12),
     ]
 
-    assert ReverseDuplicateDetector(AbsoluteDistance()).find(images, threshold=2) == [
+    assert QualityAwareDuplicateDetector(AbsoluteDistance()).find(images, threshold=2) == [
         Duplicate(Path("1.txt"), Path("2.txt"), 2)
     ]
 
@@ -155,7 +155,7 @@ def test_deduplicator_coordinates_abstract_indexer_detector_and_remover() -> Non
     remover = RecordingRemover()
     service = DirectoryDeduplicator(
         StaticIndexer([first, second]),
-        ReverseDuplicateDetector(AbsoluteDistance()),
+        QualityAwareDuplicateDetector(AbsoluteDistance()),
         remover=remover,
     )
 
@@ -192,12 +192,14 @@ def test_webp_converter_uses_injected_codec(tmp_path: Path) -> None:
     source.write_text("original image data")
     codec = FakeWebPCodec(encoded_size=4)
 
-    conversions, skips = WebPDirectoryConverter(codec).convert(
+    result = WebPDirectoryConverter(codec).convert(
         tmp_path, quality=73, replace=True
     )
+    conversions = result.conversions
+    skips = result.skips
 
     destination = tmp_path / "photo.webp"
-    assert skips == []
+    assert skips == ()
     assert conversions[0].source == source
     assert conversions[0].destination == destination
     assert conversions[0].webp_size == 4
@@ -212,11 +214,12 @@ def test_webp_converter_uses_injected_scanner(tmp_path: Path) -> None:
     included.write_text("included image data")
     excluded.write_text("excluded image data")
 
-    conversions, _ = WebPDirectoryConverter(
+    result = WebPDirectoryConverter(
         FakeWebPCodec(),
         scanner=StaticScanner([included]),
     ).convert(tmp_path, replace=True)
 
+    conversions = result.conversions
     assert [conversion.source for conversion in conversions] == [included]
     assert excluded.exists()
 

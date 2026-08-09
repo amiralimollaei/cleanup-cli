@@ -13,7 +13,6 @@ from ..controllers import (
     DeduplicationResult,
     WebPConversionController,
     WebPConversionRequest,
-    WebPConversionResult,
 )
 from ..models.abstractions import ImageDirectoryScanner, RecursiveDirectoryIndexer
 from ..models.image_duplicates import (
@@ -21,10 +20,14 @@ from ..models.image_duplicates import (
     ImageSignature,
     ImageSignatureDistance,
     PillowImageSignatureAnalyzer,
-    ReverseDuplicateDetector,
+    QualityAwareDuplicateDetector,
     image_quality_key,
 )
-from ..models.image_webp import PillowWebPCodec, WebPDirectoryConverter
+from ..models.image_webp import (
+    PillowWebPCodec,
+    WebPDirectoryConverter,
+    WebPDirectoryConversionResult,
+)
 from .commands import DeduplicateCommand, WebPCommand
 
 
@@ -42,7 +45,7 @@ class ArgparseCliView:
     def __init__(
         self,
         deduplication: Controller[DeduplicationRequest, DeduplicationResult],
-        webp: Controller[WebPConversionRequest, WebPConversionResult],
+        webp: Controller[WebPConversionRequest, WebPDirectoryConversionResult],
         *,
         output: TextIO | None = None,
     ) -> None:
@@ -93,7 +96,7 @@ def create_cli_view(*, output: TextIO | None = None) -> ArgparseCliView:
     )
     deduplicator = DirectoryDeduplicator(
         indexer,
-        ReverseDuplicateDetector[ImageSignature](
+        QualityAwareDuplicateDetector[ImageSignature](
             ImageSignatureDistance(), image_quality_key
         ),
     )
