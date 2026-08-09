@@ -38,7 +38,9 @@ class StaticIndexer(DirectoryIndexer[int]):
     def __init__(self, files: list[IndexedFile[int]]) -> None:
         self.files = files
 
-    def index(self, directory: Path) -> list[IndexedFile[int]]:
+    def index(
+        self, directory: Path, *, max_workers: int | None = None
+    ) -> list[IndexedFile[int]]:
         return self.files
 
 

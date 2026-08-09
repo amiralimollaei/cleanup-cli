@@ -104,7 +104,11 @@ def _dct_2d(pixels: NDArray[np.float64]) -> NDArray[np.float64]:
     """Apply an orthonormal 2D DCT, falling back to NumPy without SciPy."""
 
     if _scipy_dctn is not None:
-        return _scipy_dctn(pixels, type=2, norm="ortho")
+        # Normalizing the result through NumPy both guarantees the public
+        # helper's dtype and works around SciPy's overly broad dispatch type.
+        return np.asarray(
+            _scipy_dctn(pixels, type=2, norm="ortho"), dtype=np.float64
+        )
 
     height_transform = _dct_matrix(pixels.shape[0])
     width_transform = _dct_matrix(pixels.shape[1])

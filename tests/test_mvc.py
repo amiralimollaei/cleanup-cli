@@ -41,7 +41,9 @@ class RecordingController(Controller[RequestT, ResultT], Generic[RequestT, Resul
 
 
 class StaticIndexer(DirectoryIndexer[int]):
-    def index(self, directory: Path) -> list[IndexedFile[int]]:
+    def index(
+        self, directory: Path, *, max_workers: int | None = None
+    ) -> list[IndexedFile[int]]:
         return [
             IndexedFile(directory / "1.jpg", 1),
             IndexedFile(directory / "2.jpg", 1),
