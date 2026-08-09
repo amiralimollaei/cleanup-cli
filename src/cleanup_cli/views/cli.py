@@ -54,7 +54,7 @@ class ArgparseCliView:
         parser, duplicate_parser, webp_parser = _build_parser()
         values = list(arguments) if arguments is not None else None
 
-        if values and values[0] not in {"duplicates", "webp", "-h", "--help"}:
+        if values and values[0] not in {"deduplicate", "webp", "-h", "--help"}:
             legacy_parser = argparse.ArgumentParser(
                 description="Recursively remove perceptually duplicate images."
             )
@@ -64,7 +64,7 @@ class ArgparseCliView:
             return 0
 
         args = parser.parse_args(values)
-        if args.command == "duplicates":
+        if args.command == "deduplicate":
             self._run_duplicates(args, duplicate_parser)
         elif args.command == "webp":
             self._run_webp(args, webp_parser)
@@ -165,7 +165,7 @@ def _build_parser() -> tuple[
     subparsers = parser.add_subparsers(dest="command")
 
     duplicate_parser = subparsers.add_parser(
-        "duplicates", help="find or remove perceptually duplicate images"
+        "deduplicate", help="find or remove perceptually duplicate images"
     )
     _add_duplicate_arguments(duplicate_parser)
 

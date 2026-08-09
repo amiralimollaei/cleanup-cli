@@ -52,13 +52,13 @@ path among matching images is kept.
 The default is a dry run and does not change any files:
 
 ```console
-cleanup-cli duplicates /path/to/photos
+cleanup-cli deduplicate /path/to/photos
 ```
 
 Use `--delete` to remove the duplicates reported by the dry run:
 
 ```console
-cleanup-cli duplicates /path/to/photos --delete
+cleanup-cli deduplicate /path/to/photos --delete
 ```
 
 Deletion verifies that each candidate is unchanged since indexing. Changed or
@@ -74,7 +74,7 @@ visual change. A conservative starting point for resized or re-encoded copies
 is 4:
 
 ```console
-cleanup-cli duplicates /path/to/photos --threshold 4
+cleanup-cli deduplicate /path/to/photos --threshold 4
 ```
 
 The accepted range is 0 through 64. Perceptual hashes describe low-frequency

@@ -80,7 +80,7 @@ def test_cli_view_builds_deduplication_request_and_renders_result() -> None:
     view = ArgparseCliView(duplicate_controller, webp_controller, output=output)
 
     exit_code = view.run(
-        ["duplicates", "/photos", "--threshold", "4", "--max-workers", "3"]
+        ["deduplicate", "/photos", "--threshold", "4", "--max-workers", "3"]
     )
 
     assert exit_code == 0
