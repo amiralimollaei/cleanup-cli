@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, TypeVar
@@ -111,9 +112,11 @@ class WebPDirectoryConverter(Generic[FrameT]):
         codec: WebPCodec[FrameT],
         *,
         scanner: DirectoryScanner | None = None,
+        max_workers: int | None = None,
     ) -> None:
         self._codec = codec
         self._scanner = scanner or ImageDirectoryScanner()
+        self._max_workers = max_workers
 
     def convert(
         self,
@@ -121,6 +124,7 @@ class WebPDirectoryConverter(Generic[FrameT]):
         *,
         quality: int = 80,
         replace: bool = False,
+        max_workers: int | None = None,
     ) -> tuple[list[WebPConversion], list[WebPSkip]]:
         options = WebPOptions(quality, replace)
 
@@ -128,12 +132,21 @@ class WebPDirectoryConverter(Generic[FrameT]):
         skips: list[WebPSkip] = []
 
         paths = list(self._scanner.scan(directory))
-        for path in tqdm.tqdm(paths, desc="converting", unit="file"):
-            result = self._convert_file_safely(path, options)
-            if isinstance(result, WebPConversion):
-                conversions.append(result)
-            elif result is not None:
-                skips.append(result)
+        workers = self._max_workers if max_workers is None else max_workers
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            results = executor.map(
+                lambda path: self._convert_file_safely(path, options), paths
+            )
+            for result in tqdm.tqdm(
+                results,
+                total=len(paths),
+                desc="converting",
+                unit="file",
+            ):
+                if isinstance(result, WebPConversion):
+                    conversions.append(result)
+                elif result is not None:
+                    skips.append(result)
 
         return conversions, skips
 
@@ -233,6 +246,7 @@ def convert_directory_to_webp(
     *,
     quality: int = 80,
     replace: bool = False,
+    max_workers: int | None = None,
 ) -> tuple[list[WebPConversion], list[WebPSkip]]:
     """Recursively replace images with smaller, equally sized WebP files.
 
@@ -241,5 +255,5 @@ def convert_directory_to_webp(
     use fewer bytes. Existing destination paths are never overwritten.
     """
 
-    converter = WebPDirectoryConverter(PillowWebPCodec())
+    converter = WebPDirectoryConverter(PillowWebPCodec(), max_workers=max_workers)
     return converter.convert(Path(directory), quality=quality, replace=replace)
