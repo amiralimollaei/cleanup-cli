@@ -5,13 +5,18 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Generic, Protocol, TypeVar
 
 import numpy as np
-from PIL import Image
-from scipy.fft import dctn
 from numpy.typing import NDArray
+from PIL import Image
+
+try:
+    from scipy.fft import dctn as _scipy_dctn
+except ImportError:  # pragma: no cover - exercised by forcing the fallback
+    _scipy_dctn = None
 
 from .abstractions import (
     DirectoryIndexer,
@@ -60,6 +65,18 @@ class ImageSignature:
     average_rgb: tuple[int, int, int]
 
 
+@lru_cache(maxsize=None)
+def _dct_matrix(size: int) -> NDArray[np.float64]:
+    """Return an orthonormal DCT-II matrix for the NumPy fallback."""
+
+    positions = np.arange(size, dtype=np.float64)
+    frequencies = positions[:, np.newaxis]
+    matrix = np.cos(np.pi * (positions + 0.5) * frequencies / size)
+    matrix[0] *= np.sqrt(1.0 / size)
+    matrix[1:] *= np.sqrt(2.0 / size)
+    return matrix
+
+
 def _load_normalized(path: Path) -> tuple[NDArray[np.float64], NDArray[np.uint8]]:
     """Decode the first image frame into normalized grayscale and RGB arrays."""
 
@@ -73,8 +90,19 @@ def _load_normalized(path: Path) -> tuple[NDArray[np.float64], NDArray[np.uint8]
         return grayscale, rgb
 
 
+def _dct_2d(pixels: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Apply an orthonormal 2D DCT, falling back to NumPy without SciPy."""
+
+    if _scipy_dctn is not None:
+        return _scipy_dctn(pixels, type=2, norm="ortho")
+
+    height_transform = _dct_matrix(pixels.shape[0])
+    width_transform = _dct_matrix(pixels.shape[1])
+    return height_transform @ pixels @ width_transform.T
+
+
 def _phash(pixels: NDArray[np.float64]) -> int:
-    coefficients = dctn(pixels, type=2, norm="ortho")
+    coefficients = _dct_2d(pixels)
     low_frequencies = coefficients[
         :PHASH_LOW_FREQUENCIES, :PHASH_LOW_FREQUENCIES
     ].ravel()

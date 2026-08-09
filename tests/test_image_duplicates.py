@@ -11,6 +11,7 @@ from cleanup_cli import (
     index_images,
     perceptual_hash,
 )
+from cleanup_cli.models import image_duplicates
 from cleanup_cli.models.abstractions import IndexedFile, file_identity
 from cleanup_cli.models.image_duplicates import Duplicate
 
@@ -39,6 +40,19 @@ def test_perceptual_hash_is_stable_for_same_decoded_pixels(tmp_path: Path) -> No
     _write_pgm(second, pixels)
 
     assert perceptual_hash(first) == perceptual_hash(second)
+
+
+def test_numpy_dct_fallback_matches_scipy(monkeypatch: pytest.MonkeyPatch) -> None:
+    pixels = _pattern(32).astype(np.float64)
+    assert image_duplicates._scipy_dctn is not None
+    scipy_coefficients = image_duplicates._dct_2d(pixels)
+    scipy_hash = image_duplicates._phash(pixels)
+
+    monkeypatch.setattr(image_duplicates, "_scipy_dctn", None)
+    numpy_coefficients = image_duplicates._dct_2d(pixels)
+
+    np.testing.assert_allclose(numpy_coefficients, scipy_coefficients, atol=1e-10)
+    assert image_duplicates._phash(pixels) == scipy_hash
 
 
 def test_perceptual_hash_survives_resizing(tmp_path: Path) -> None:
