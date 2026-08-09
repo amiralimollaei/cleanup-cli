@@ -10,7 +10,6 @@ requires-python = ">=3.12"
 dependencies = [
     "pillow>=11.0.0",
     "numpy>=2.5.1",
-    "scipy>=1.16.0",
     "tqdm>=4.70.0",
 ]
 
@@ -20,6 +19,11 @@ cleanup-cli = "cleanup_cli:main"
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "pyright>=1.0",
+]
+
+scipy = [
+    "scipy>=1.16.0",
 ]
 
 [build-system]
