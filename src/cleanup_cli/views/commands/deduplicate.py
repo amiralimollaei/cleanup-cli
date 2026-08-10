@@ -9,6 +9,7 @@ from typing import TextIO
 from ...controllers import Controller, DeduplicationRequest, DeduplicationResult
 from ...models.image_duplicates import DeduplicationOptions, Duplicate
 from .arguments import positive_int
+from .progress import CliProgress
 
 
 class DeduplicateCommand:
@@ -73,11 +74,12 @@ class DeduplicateCommand:
         """Build the request, invoke the controller, and render its result."""
 
         reported: set[Path] = set()
+        progress = CliProgress(output=self._output)
         try:
             def on_result(duplicate: Duplicate) -> None:
                 reported.add(duplicate.removed)
                 action = "deleted" if args.delete else "would delete"
-                self._print_duplicate(action, duplicate)
+                self._print_duplicate(action, duplicate, progress=progress)
 
             result = self._controller.execute(
                 DeduplicationRequest(
@@ -89,10 +91,13 @@ class DeduplicateCommand:
                         memory_limit_mb=args.memory_limit_mb,
                     ),
                     on_result=on_result,
+                    on_progress=progress,
                 )
             )
         except (NotADirectoryError, ValueError) as error:
             parser.error(str(error))
+        finally:
+            progress.close()
 
         action = "deleted" if result.deleted else "would delete"
         for duplicate in result.duplicates:
@@ -105,13 +110,23 @@ class DeduplicateCommand:
             f"total space {savings}: {result.total_saved_bytes} bytes"
         )
 
-    def _print_duplicate(self, action: str, duplicate: Duplicate) -> None:
+    def _print_duplicate(
+        self,
+        action: str,
+        duplicate: Duplicate,
+        *,
+        progress: CliProgress | None = None,
+    ) -> None:
         savings = "saved" if action == "deleted" else "would save"
         self._print(
             f"{action}: {duplicate.removed} "
             f"(keeping {duplicate.kept}, distance {duplicate.distance}, "
-            f"{savings} {duplicate.saved_bytes} bytes)"
+            f"{savings} {duplicate.saved_bytes} bytes)",
+            progress=progress,
         )
 
-    def _print(self, message: str) -> None:
-        print(message, file=self._output, flush=True)
+    def _print(self, message: str, *, progress: CliProgress | None = None) -> None:
+        if progress is None:
+            print(message, file=self._output, flush=True)
+        else:
+            progress.write(message)

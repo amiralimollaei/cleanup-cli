@@ -15,6 +15,7 @@ from ...models.image_webp import (
     WebPSkip,
 )
 from .arguments import positive_int
+from .progress import CliProgress
 
 
 class WebPCommand:
@@ -76,14 +77,15 @@ class WebPCommand:
         """Build the request, invoke the controller, and render its result."""
 
         reported: set[tuple[str, Path]] = set()
+        progress = CliProgress(output=self._output)
         try:
             def on_result(item: WebPResult) -> None:
                 if isinstance(item, WebPConversion):
                     reported.add(("conversion", item.source))
-                    self._print_conversion(item)
+                    self._print_conversion(item, progress=progress)
                 elif isinstance(item, WebPSkip):
                     reported.add(("skip", item.path))
-                    self._print_skip(item)
+                    self._print_skip(item, progress=progress)
 
             result = self._controller.execute(
                 WebPConversionRequest(
@@ -95,10 +97,13 @@ class WebPCommand:
                         memory_limit_mb=args.memory_limit_mb,
                     ),
                     on_result=on_result,
+                    on_progress=progress,
                 )
             )
         except (NotADirectoryError, ValueError) as error:
             parser.error(str(error))
+        finally:
+            progress.close()
 
         for conversion in result.conversions:
             if ("conversion", conversion.source) not in reported:
@@ -112,14 +117,25 @@ class WebPCommand:
         )
         self._print(f"total space saved: {result.total_saved_bytes} bytes")
 
-    def _print_conversion(self, conversion: WebPConversion) -> None:
+    def _print_conversion(
+        self,
+        conversion: WebPConversion,
+        *,
+        progress: CliProgress | None = None,
+    ) -> None:
         self._print(
             f"converted: {conversion.source} -> {conversion.destination} "
-            f"(saved {conversion.saved_bytes} bytes)"
+            f"(saved {conversion.saved_bytes} bytes)",
+            progress=progress,
         )
 
-    def _print_skip(self, skip: WebPSkip) -> None:
-        self._print(f"skipped: {skip.path} ({skip.reason})")
+    def _print_skip(
+        self, skip: WebPSkip, *, progress: CliProgress | None = None
+    ) -> None:
+        self._print(f"skipped: {skip.path} ({skip.reason})", progress=progress)
 
-    def _print(self, message: str) -> None:
-        print(message, file=self._output, flush=True)
+    def _print(self, message: str, *, progress: CliProgress | None = None) -> None:
+        if progress is None:
+            print(message, file=self._output, flush=True)
+        else:
+            progress.write(message)

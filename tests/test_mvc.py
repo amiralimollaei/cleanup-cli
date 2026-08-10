@@ -24,9 +24,10 @@ from cleanup_cli.models import (
     WebPOptions,
     WebPSkip,
 )
-from cleanup_cli.models.abstractions import FileIdentity
+from cleanup_cli.models.abstractions import FileIdentity, TaskProgress
 from cleanup_cli.views import ArgparseCliView
 from cleanup_cli.views.commands import DeduplicateCommand, WebPCommand
+from cleanup_cli.views.commands import progress as cli_progress
 
 
 RequestT = TypeVar("RequestT")
@@ -80,6 +81,59 @@ class RecordingCommand:
 class IntegerDistance:
     def distance(self, left: int, right: int) -> int:
         return abs(left - right)
+
+
+class RecordingProgressBar:
+    def __init__(self, **kwargs: object) -> None:
+        self.kwargs = kwargs
+        self.updates: list[float] = []
+        self.writes: list[tuple[str, object]] = []
+        self.closed = False
+
+    def update(self, n: float | None = 1) -> bool | None:
+        assert n is not None
+        self.updates.append(n)
+        return None
+
+    def write(
+        self,
+        s: str,
+        file: object = None,
+        end: str = "\n",
+        nolock: bool = False,
+    ) -> None:
+        self.writes.append((s, file))
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class ProgressStreamingDeduplicationController(
+    Controller[DeduplicationRequest, DeduplicationResult]
+):
+    def execute(self, request: DeduplicationRequest) -> DeduplicationResult:
+        duplicate = Duplicate(Path("duplicate.jpg"), Path("kept.jpg"), 0)
+        assert request.on_progress is not None
+        assert request.on_result is not None
+        request.on_progress(TaskProgress("Indexing images", 0, 1))
+        request.on_result(duplicate)
+        request.on_progress(TaskProgress("Indexing images", 1, 1))
+        return DeduplicationResult((duplicate,), deleted=False)
+
+
+class ProgressStreamingWebPController(
+    Controller[WebPConversionRequest, WebPDirectoryConversionResult]
+):
+    def execute(
+        self, request: WebPConversionRequest
+    ) -> WebPDirectoryConversionResult:
+        skip = WebPSkip(Path("photo.png"), "already optimized")
+        assert request.on_progress is not None
+        assert request.on_result is not None
+        request.on_progress(TaskProgress("Converting images", 0, 1))
+        request.on_result(skip)
+        request.on_progress(TaskProgress("Converting images", 1, 1))
+        return WebPDirectoryConversionResult((), (skip,))
 
 
 def test_deduplication_controller_returns_immutable_view_model(tmp_path: Path) -> None:
@@ -252,6 +306,45 @@ def test_cli_renders_streamed_webp_result_before_controller_returns() -> None:
 
     assert view.run(["webp", "/photos", "--replace"]) == 0
     assert output.getvalue().count("converted: early.png") == 1
+
+
+@pytest.mark.parametrize(
+    ("command", "arguments", "expected_log"),
+    [
+        (
+            DeduplicateCommand(ProgressStreamingDeduplicationController()),
+            ["deduplicate", "/photos"],
+            "would delete: duplicate.jpg",
+        ),
+        (
+            WebPCommand(ProgressStreamingWebPController()),
+            ["webp", "/photos"],
+            "skipped: photo.png",
+        ),
+    ],
+)
+def test_cli_routes_streamed_logs_through_active_pbar_write(
+    command: DeduplicateCommand | WebPCommand,
+    arguments: list[str],
+    expected_log: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bars: list[RecordingProgressBar] = []
+    output = StringIO()
+    command._output = output
+    monkeypatch.setattr(
+        cli_progress.tqdm,
+        "tqdm",
+        lambda **kwargs: bars.append(RecordingProgressBar(**kwargs)) or bars[-1],
+    )
+
+    assert ArgparseCliView(command, output=output).run(arguments) == 0
+
+    assert len(bars) == 1
+    assert bars[0].closed
+    assert bars[0].updates == [0, 1]
+    assert any(expected_log in message for message, _ in bars[0].writes)
+    assert all(file is output for _, file in bars[0].writes)
 
 
 def test_cli_view_rejects_non_positive_webp_worker_count() -> None:
