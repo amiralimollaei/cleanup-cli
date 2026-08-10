@@ -1,0 +1,313 @@
+from __future__ import annotations
+
+from pathlib import Path
+import threading
+import time
+from typing import Generic, TypeVar
+
+import gi  # pyright: ignore[reportMissingImports]
+import pytest
+
+gi.require_version("Gtk", "4.0")
+from gi.repository import GLib, Gtk  # noqa: E402  # pyright: ignore[reportMissingImports, reportAttributeAccessIssue]
+
+from cleanup_cli.controllers import (
+    Controller,
+    DeduplicationRequest,
+    DeduplicationResult,
+    WebPConversionRequest,
+)
+from cleanup_cli.models import (
+    DeduplicationOptions,
+    Duplicate,
+    WebPConversion,
+    WebPDirectoryConversionResult,
+    WebPOptions,
+    WebPSkip,
+)
+from cleanup_cli.views.gui import (
+    DeduplicationGtkTab,
+    GtkGuiView,
+    WebPConversionGtkTab,
+    create_gui_view,
+)
+from cleanup_cli.views.gui.application import GnomeThemeSynchronizer
+
+
+RequestT = TypeVar("RequestT")
+ResultT = TypeVar("ResultT")
+GTK_AVAILABLE = bool(Gtk.init_check())
+requires_display = pytest.mark.skipif(
+    not GTK_AVAILABLE,
+    reason="GTK display is not available",
+)
+
+
+class RecordingController(Controller[RequestT, ResultT], Generic[RequestT, ResultT]):
+    def __init__(self, result: ResultT) -> None:
+        self.result = result
+        self.requests: list[RequestT] = []
+        self.thread_ids: list[int | None] = []
+
+    def execute(self, request: RequestT) -> ResultT:
+        self.requests.append(request)
+        self.thread_ids.append(threading.current_thread().ident)
+        return self.result
+
+
+class StaticTab:
+    icon_name = "applications-system-symbolic"
+
+    def __init__(self, title: str) -> None:
+        self.title = title
+        self.build_count = 0
+
+    def build(self) -> Gtk.Widget:
+        self.build_count += 1
+        return Gtk.Label(label=self.title)
+
+
+def test_deduplication_gui_request_validation_and_options() -> None:
+    assert DeduplicationGtkTab.create_request(
+        "/photos",
+        threshold=4,
+        delete=True,
+        max_workers=3,
+    ) == DeduplicationRequest(
+        Path("/photos"),
+        DeduplicationOptions(threshold=4, delete=True, max_workers=3),
+    )
+
+    with pytest.raises(ValueError, match="select a directory"):
+        DeduplicationGtkTab.create_request("   ")
+    with pytest.raises(ValueError, match="threshold must be between"):
+        DeduplicationGtkTab.create_request("/photos", threshold=65)
+
+
+def test_webp_gui_request_validation_and_options() -> None:
+    assert WebPConversionGtkTab.create_request(
+        "/photos",
+        quality=90,
+        replace=True,
+        max_workers=3,
+        memory_limit_mb=256,
+    ) == WebPConversionRequest(
+        Path("/photos"),
+        WebPOptions(
+            quality=90,
+            replace=True,
+            max_workers=3,
+            memory_limit_mb=256,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="select a directory"):
+        WebPConversionGtkTab.create_request("")
+    with pytest.raises(ValueError, match="quality must be between"):
+        WebPConversionGtkTab.create_request("/photos", quality=101)
+
+
+@requires_display
+def test_gui_main_view_accepts_any_number_of_tabs() -> None:
+    tabs = tuple(StaticTab(f"Tool {index}") for index in range(3))
+    view = GtkGuiView(
+        *tabs,
+        application_id="io.github.amiralimollaei.CleanupCli.TabTest",
+    )
+
+    main = view._build_main_view()
+
+    assert view.tabs == tabs
+    assert isinstance(main, Gtk.Paned)
+    stack = main.get_end_child()
+    assert isinstance(stack, Gtk.Stack)
+    assert stack.get_pages().get_n_items() == 3
+    assert [tab.build_count for tab in tabs] == [1, 1, 1]
+    # A custom tab does not need a shutdown hook.
+    view._on_shutdown()
+
+
+@requires_display
+def test_gui_main_view_supports_no_tabs() -> None:
+    view = GtkGuiView(
+        application_id="io.github.amiralimollaei.CleanupCli.EmptyTest"
+    )
+
+    assert view.tabs == ()
+    assert isinstance(view._build_main_view(), Gtk.Box)
+
+
+@requires_display
+def test_gui_follows_gnome_color_scheme() -> None:
+    synchronizer = GnomeThemeSynchronizer()
+    interface = GnomeThemeSynchronizer._create_settings()
+    if interface is None:
+        pytest.skip("GNOME interface settings are not available")
+
+    synchronizer.start()
+
+    gtk_settings = Gtk.Settings.get_default()
+    assert gtk_settings is not None
+    assert bool(
+        gtk_settings.get_property("gtk-application-prefer-dark-theme")
+    ) is (interface.get_string("color-scheme") == "prefer-dark")
+    synchronizer.stop()
+
+
+@requires_display
+def test_production_gui_icons_exist_in_the_active_theme() -> None:
+    icon_theme = Gtk.IconTheme.get_for_display(Gtk.Widget.get_display(Gtk.Label()))
+    icon_names = {
+        "checkmark-symbolic",
+        "dialog-error-symbolic",
+        "dialog-information-symbolic",
+        "edit-delete-symbolic",
+        "edit-find-symbolic",
+        "folder-open-symbolic",
+        "folder-symbolic",
+        "image-x-generic-symbolic",
+        "media-playback-start-symbolic",
+        "open-menu-symbolic",
+        "user-trash-symbolic",
+        "view-grid-symbolic",
+        "view-list-symbolic",
+    }
+
+    assert not sorted(name for name in icon_names if not icon_theme.has_icon(name))
+
+
+@requires_display
+@pytest.mark.parametrize(
+    ("color_scheme", "prefer_dark"),
+    [
+        ("prefer-dark", True),
+        ("prefer-light", False),
+        ("default", False),
+    ],
+)
+def test_gnome_theme_mapping(color_scheme: str, prefer_dark: bool) -> None:
+    gtk_settings = Gtk.Settings.get_default()
+    assert gtk_settings is not None
+
+    GnomeThemeSynchronizer._apply(color_scheme)
+
+    assert bool(
+        gtk_settings.get_property("gtk-application-prefer-dark-theme")
+    ) is prefer_dark
+
+
+@requires_display
+def test_production_gui_composes_both_cleanup_tabs() -> None:
+    view = create_gui_view()
+
+    assert [type(tab) for tab in view.tabs] == [
+        DeduplicationGtkTab,
+        WebPConversionGtkTab,
+    ]
+    assert isinstance(view._build_main_view(), Gtk.Paned)
+    view._on_shutdown()
+
+
+@requires_display
+def test_deduplication_tab_builds_form_request_and_renders_results() -> None:
+    duplicate = Duplicate(Path("one.jpg"), Path("two.jpg"), 3)
+    controller = RecordingController(
+        DeduplicationResult((duplicate,), deleted=False)
+    )
+    tab = DeduplicationGtkTab(controller)
+    tab.build()
+    assert tab._directory is not None
+    assert tab._threshold is not None
+    assert tab._automatic_workers is not None
+    assert tab._workers is not None
+    assert tab._delete is not None
+    tab._directory.set_text("/photos")
+    tab._threshold.set_value(4)
+    tab._automatic_workers.set_active(False)
+    tab._workers.set_value(3)
+
+    request = tab._request_from_form()
+    tab._render_result(controller.result)
+
+    assert request == DeduplicationRequest(
+        Path("/photos"),
+        DeduplicationOptions(threshold=4, max_workers=3),
+    )
+    assert tab._result_list is not None
+    assert tab._result_list.get_first_child() is not None
+    assert tab._summary_label is not None
+    assert tab._summary_label.get_text() == "1 duplicate found"
+    tab.shutdown()
+
+
+@requires_display
+def test_webp_tab_builds_form_request_and_renders_results() -> None:
+    conversion = WebPConversion(
+        Path("photo.png"),
+        Path("photo.webp"),
+        original_size=2048,
+        webp_size=1024,
+    )
+    skip = WebPSkip(Path("small.png"), "WebP would not be smaller")
+    controller = RecordingController(
+        WebPDirectoryConversionResult((conversion,), (skip,))
+    )
+    tab = WebPConversionGtkTab(controller)
+    tab.build()
+    assert tab._directory is not None
+    assert tab._quality is not None
+    assert tab._automatic_workers is not None
+    assert tab._workers is not None
+    assert tab._automatic_memory is not None
+    assert tab._memory is not None
+    assert tab._replace is not None
+    tab._directory.set_text("/photos")
+    tab._quality.set_value(90)
+    tab._automatic_workers.set_active(False)
+    tab._workers.set_value(3)
+    tab._automatic_memory.set_active(False)
+    tab._memory.set_value(256)
+    tab._replace.set_active(True)
+
+    request = tab._request_from_form()
+    tab._render_result(controller.result)
+
+    assert request == WebPConversionRequest(
+        Path("/photos"),
+        WebPOptions(
+            quality=90,
+            replace=True,
+            max_workers=3,
+            memory_limit_mb=256,
+        ),
+    )
+    assert tab._result_list is not None
+    first = tab._result_list.get_first_child()
+    assert first is not None
+    assert first.get_next_sibling() is not None
+    assert tab._summary_label is not None
+    assert tab._summary_label.get_text() == "1 converted, 1 skipped | 1.0 KiB saved"
+    tab.shutdown()
+
+
+@requires_display
+def test_controller_execution_runs_off_the_gtk_thread() -> None:
+    controller = RecordingController(DeduplicationResult((), deleted=False))
+    tab = DeduplicationGtkTab(controller)
+    tab.build()
+    request = DeduplicationGtkTab.create_request("/photos")
+    gtk_thread = threading.current_thread().ident
+
+    tab._submit(request, "Working...")
+    deadline = time.monotonic() + 2
+    context = GLib.MainContext.default()
+    while tab._running and time.monotonic() < deadline:
+        context.iteration(False)
+        time.sleep(0.005)
+
+    assert not tab._running
+    assert controller.requests == [request]
+    assert controller.thread_ids != [gtk_thread]
+    assert tab._summary_label is not None
+    assert tab._summary_label.get_text() == "0 duplicates found"
+    tab.shutdown()

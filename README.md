@@ -1,6 +1,86 @@
-# CleanUp CLI
+# Image Cleanup
 
-Command line tool for removing duplicate images, and compressing everything into webp for saving storage.
+Command-line and GTK tools for removing duplicate images and converting images
+to WebP to save storage.
+
+## Installation
+
+The Python environment is managed with [uv](https://docs.astral.sh/uv/).
+PyGObject is declared in `pyproject.toml`; its PyCairo dependency is captured
+in `uv.lock`. Both are installed inside the project virtual environment. GTK
+itself and the headers needed to build those Python extensions are native Linux
+packages.
+
+On Fedora, install the native prerequisites first. The Python development
+package must match the version in `.python-version` (currently Python 3.12):
+
+```console
+sudo dnf install gtk4 python3.12-devel gobject-introspection-devel \
+  cairo-devel cairo-gobject-devel gcc pkgconf-pkg-config
+```
+
+Then create/synchronize the project environment from `uv.lock`:
+
+```console
+uv sync
+```
+
+Developers running the complete test suite should also install the optional
+SciPy group used to compare the built-in NumPy DCT fallback:
+
+```console
+uv sync --group scipy
+```
+
+Do not install PyGObject with the system Python for this project: `uv sync`
+builds and installs `PyGObject` and `pycairo` into `.venv`.
+
+## GTK graphical interface
+
+Launch the GNOME-style GTK 4 interface with:
+
+```console
+uv run cleanup-gui
+```
+
+The application provides **Duplicate Images** and **WebP Conversion** tabs.
+Both default to non-destructive dry runs, display scrollable results, and run
+controller work in a background thread so the GTK event loop remains
+responsive. Enabling deletion or replacement requires confirmation. The UI
+uses symbolic icons from the active GNOME icon theme and follows GNOME's
+light/dark preference, including changes made while the application is open.
+
+The main view is extensible and accepts zero or any number of tabs. A tab only
+needs a title, a symbolic icon name, and a method that builds its GTK widget:
+
+```python
+import gi
+
+gi.require_version("Gtk", "4.0")
+from gi.repository import Gtk
+
+from cleanup_cli.views.gui import GtkGuiView
+
+
+class InformationTab:
+    title = "Information"
+    icon_name = "dialog-information-symbolic"
+
+    def build(self) -> Gtk.Widget:
+        return Gtk.Label(label="Custom cleanup tool")
+
+
+GtkGuiView(InformationTab()).run()
+```
+
+## Command-line interface
+
+The existing CLI remains available through `uv run cleanup-cli`. For example:
+
+```console
+uv run cleanup-cli deduplicate /path/to/photos
+uv run cleanup-cli webp /path/to/photos
+```
 
 ## Architecture
 
@@ -11,8 +91,9 @@ The package uses Model View Controller boundaries:
 - Controllers in `cleanup_cli/controllers/` accept immutable request
   dataclasses and return immutable result dataclasses without depending on CLI
   concerns.
-- The CLI view in `cleanup_cli/views/` owns argument parsing, output formatting,
-  and the production dependency composition.
+- Views in `cleanup_cli/views/` own presentation and production dependency
+  composition. The argparse CLI registers arbitrary subcommands, while the GTK
+  main view registers arbitrary tabs.
 
 Protocols define structural dependencies such as scanners, analyzers, metrics,
 removers, and views. Abstract generic base classes define extensible indexer,
@@ -56,10 +137,10 @@ memory budget may select fewer workers for large images.
 
 ## Removing duplicate images
 
-`cleanup-cli` recursively scans a directory, decodes images with PyAV, and
+`cleanup-cli` recursively scans a directory, decodes images with Pillow, and
 computes a 64-bit perceptual hash (pHash) using a NumPy DCT. A normalized RGB
 color signature is also checked because grayscale pHash alone cannot detect a
-uniform color shift. Files that PyAV cannot decode as images are ignored.
+uniform color shift. Files that Pillow cannot decode as images are ignored.
 Paths are naturally sorted using the rules below. Among matching images, the
 image with the highest pixel resolution is kept. If resolutions match, the
 larger file is kept as a quality tie-breaker; if resolution and file size both

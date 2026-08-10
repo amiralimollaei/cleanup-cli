@@ -11,10 +11,12 @@ dependencies = [
     "pillow>=11.0.0",
     "numpy>=2.5.1",
     "tqdm>=4.70.0",
+    "pygobject>=3.56.3",
 ]
 
 [project.scripts]
 cleanup-cli = "cleanup_cli:main"
+cleanup-gui = "cleanup_cli.gui:main"
 
 [dependency-groups]
 dev = [
