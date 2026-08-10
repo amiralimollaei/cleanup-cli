@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Generic, TypeVar
 
+from ..models.abstractions import ProgressObserver
 from ..models.image_duplicates import (
     DeduplicationOptions,
     DirectoryDeduplicator,
@@ -46,6 +47,11 @@ class DeduplicationRequest:
         compare=False,
         repr=False,
     )
+    on_progress: ProgressObserver | None = field(
+        default=None,
+        compare=False,
+        repr=False,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +82,7 @@ class DeduplicationController(
             request.directory,
             request.options,
             on_result=request.on_result,
+            on_progress=request.on_progress,
         )
         return DeduplicationResult(tuple(duplicates), request.options.delete)
 
@@ -87,6 +94,11 @@ class WebPConversionRequest:
     directory: Path
     options: WebPOptions = field(default_factory=WebPOptions)
     on_result: WebPResultObserver | None = field(
+        default=None,
+        compare=False,
+        repr=False,
+    )
+    on_progress: ProgressObserver | None = field(
         default=None,
         compare=False,
         repr=False,
@@ -107,4 +119,5 @@ class WebPConversionController(
             request.directory,
             request.options,
             on_result=request.on_result,
+            on_progress=request.on_progress,
         )

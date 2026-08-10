@@ -13,8 +13,10 @@ from .abstractions import (
     IndexedFile,
     NaturalPathOrderer,
     PathOrderer,
+    ProgressObserver,
     RecursiveDirectoryIndexer,
     RecursiveDirectoryScanner,
+    TaskProgress,
 )
 from .image_duplicates import (
     DeduplicationOptions,
@@ -75,9 +77,11 @@ __all__ = [
     "PathOrderer",
     "PillowImageSignatureAnalyzer",
     "PillowWebPCodec",
+    "ProgressObserver",
+    "QualityAwareDuplicateDetector",
     "RecursiveDirectoryIndexer",
     "RecursiveDirectoryScanner",
-    "QualityAwareDuplicateDetector",
+    "TaskProgress",
     "WebPCodec",
     "WebPConversion",
     "WebPDirectoryConverter",

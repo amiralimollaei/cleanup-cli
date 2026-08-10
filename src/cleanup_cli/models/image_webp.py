@@ -10,16 +10,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Generic, TypeAlias, TypeVar
 
-import tqdm
 from PIL import Image
 
 from .abstractions import (
     DirectoryScanner,
     FileIdentity,
     ImageDirectoryScanner,
+    ProgressObserver,
     file_identity,
     hard_link_no_clobber,
     quarantine_if_unchanged,
+    track_progress,
 )
 from .image_errors import IMAGE_INPUT_ERRORS
 from .image_memory import (
@@ -100,6 +101,8 @@ class ImageInspection:
     is_webp: bool
     is_multi_frame: bool
     estimated_peak_bytes: int
+    image_format: str | None = None
+    frame_count: int | None = None
 
     def __post_init__(self) -> None:
         width, height = self.dimensions
@@ -107,6 +110,8 @@ class ImageInspection:
             raise ValueError("image dimensions must be greater than 0")
         if self.estimated_peak_bytes < 1:
             raise ValueError("estimated_peak_bytes must be greater than 0")
+        if self.frame_count is not None and self.frame_count < 1:
+            raise ValueError("frame_count must be greater than 0")
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +122,8 @@ class DecodedImage(Generic[FrameT]):
     dimensions: tuple[int, int]
     is_webp: bool
     is_multi_frame: bool
+    image_format: str | None = None
+    frame_count: int | None = None
 
 
 class WebPCodec(ABC, Generic[FrameT]):
@@ -152,11 +159,14 @@ class PillowWebPCodec(WebPCodec[Image.Image]):
             warnings.simplefilter("error", Image.DecompressionBombWarning)
             with Image.open(path) as image:
                 dimensions = image.size
+                frame_count = getattr(image, "n_frames", 1)
                 return ImageInspection(
                     dimensions=dimensions,
                     is_webp=image.format == "WEBP",
-                    is_multi_frame=getattr(image, "n_frames", 1) > 1,
+                    is_multi_frame=frame_count > 1,
                     estimated_peak_bytes=estimate_peak_bytes(dimensions),
+                    image_format=image.format,
+                    frame_count=frame_count,
                 )
 
     def decode(self, path: Path) -> DecodedImage[Image.Image]:
@@ -164,6 +174,7 @@ class PillowWebPCodec(WebPCodec[Image.Image]):
             warnings.simplefilter("error", Image.DecompressionBombWarning)
             with Image.open(path) as image:
                 image.seek(0)
+                frame_count = getattr(image, "n_frames", 1)
                 image.load()
                 return DecodedImage(
                     # A loaded single-frame image remains usable after its
@@ -172,7 +183,9 @@ class PillowWebPCodec(WebPCodec[Image.Image]):
                     frame=image,
                     dimensions=image.size,
                     is_webp=image.format == "WEBP",
-                    is_multi_frame=getattr(image, "n_frames", 1) > 1,
+                    is_multi_frame=frame_count > 1,
+                    image_format=image.format,
+                    frame_count=frame_count,
                 )
 
     def encode(self, frame: Image.Image, destination: Path, quality: int) -> None:
@@ -216,6 +229,7 @@ class WebPDirectoryConverter(Generic[FrameT]):
         options: WebPOptions | None = None,
         *,
         on_result: WebPResultObserver | None = None,
+        on_progress: ProgressObserver | None = None,
     ) -> WebPDirectoryConversionResult:
         request = options or WebPOptions()
 
@@ -231,7 +245,14 @@ class WebPDirectoryConverter(Generic[FrameT]):
         ordered_results: list[WebPConversion | WebPSkip | None] = [None] * len(paths)
         candidates: list[_ConversionCandidate] = []
         for index, path in enumerate(
-            tqdm.tqdm(paths, desc="inspecting", unit="file")
+            track_progress(
+                paths,
+                total=len(paths),
+                description="inspecting",
+                unit="file",
+                on_progress=on_progress,
+                activity="Inspecting images",
+            )
         ):
             inspected = self._inspect_file_safely(index, path)
             if isinstance(inspected, _ConversionCandidate):
@@ -259,6 +280,7 @@ class WebPDirectoryConverter(Generic[FrameT]):
             request,
             memory_limit=memory_limit,
             on_result=on_result,
+            on_progress=on_progress,
         )
 
         conversions: list[WebPConversion] = []
@@ -289,7 +311,13 @@ class WebPDirectoryConverter(Generic[FrameT]):
             if inspection.is_webp:
                 return None
             if inspection.is_multi_frame:
-                return WebPSkip(path, "multi-frame images are not supported")
+                return WebPSkip(
+                    path,
+                    _multi_frame_skip_reason(
+                        inspection.image_format,
+                        inspection.frame_count,
+                    ),
+                )
             destination = path.with_suffix(".webp")
             if os.path.lexists(destination):
                 return WebPSkip(path, f"destination exists: {destination}")
@@ -305,6 +333,7 @@ class WebPDirectoryConverter(Generic[FrameT]):
         *,
         memory_limit: int,
         on_result: WebPResultObserver | None,
+        on_progress: ProgressObserver | None,
     ) -> None:
         """Run candidates while their estimated aggregate memory fits."""
 
@@ -318,8 +347,13 @@ class WebPDirectoryConverter(Generic[FrameT]):
             capacity=memory_limit,
             max_workers=options.max_workers,
         )
-        for candidate, result in tqdm.tqdm(
-            results, total=len(candidates), desc="converting", unit="file"
+        for candidate, result in track_progress(
+            results,
+            total=len(candidates),
+            description="converting",
+            unit="file",
+            on_progress=on_progress,
+            activity="Converting images",
         ):
             ordered_results[candidate.index] = result
             if result is not None and on_result is not None:
@@ -357,7 +391,13 @@ class WebPDirectoryConverter(Generic[FrameT]):
             if decoded.is_webp:
                 return None
             if decoded.is_multi_frame:
-                return WebPSkip(path, "multi-frame images are not supported")
+                return WebPSkip(
+                    path,
+                    _multi_frame_skip_reason(
+                        decoded.image_format,
+                        decoded.frame_count,
+                    ),
+                )
 
             destination = path.with_suffix(".webp")
             if os.path.lexists(destination):
@@ -416,6 +456,31 @@ def _temporary_webp_path(source: Path) -> Path:
     return Path(temporary_name)
 
 
+def _multi_frame_skip_reason(
+    image_format: str | None,
+    frame_count: int | None,
+) -> str:
+    """Explain why a multi-image input is skipped without losing its data."""
+
+    if image_format == "MPO":
+        count = (
+            f"{frame_count} embedded images"
+            if frame_count is not None
+            else "embedded images"
+        )
+        return (
+            "MPO (multi-picture JPEG) contains "
+            f"{count}; conversion is skipped to avoid discarding embedded image data"
+        )
+
+    if image_format is not None and frame_count is not None:
+        return (
+            f"{image_format} contains {frame_count} frames; "
+            "multi-frame conversion is not supported"
+        )
+    return "multi-frame images are not supported"
+
+
 def convert_directory_to_webp(
     directory: str | Path,
     *,
@@ -424,6 +489,7 @@ def convert_directory_to_webp(
     max_workers: int | None = None,
     memory_limit_mb: int | None = None,
     on_result: WebPResultObserver | None = None,
+    on_progress: ProgressObserver | None = None,
 ) -> WebPDirectoryConversionResult:
     """Recursively replace images with smaller, equally sized WebP files.
 
@@ -441,4 +507,9 @@ def convert_directory_to_webp(
         max_workers=max_workers,
         memory_limit_mb=memory_limit_mb,
     )
-    return converter.convert(Path(directory), options, on_result=on_result)
+    return converter.convert(
+        Path(directory),
+        options,
+        on_result=on_result,
+        on_progress=on_progress,
+    )

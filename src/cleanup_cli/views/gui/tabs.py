@@ -165,7 +165,11 @@ class DeduplicationGtkTab(
         self._streamed_count = 0
         self._streamed_saved_bytes = 0
         self._submit(
-            replace(request, on_result=self._queue_duplicate),
+            replace(
+                request,
+                on_result=self._queue_duplicate,
+                on_progress=self._queue_progress,
+            ),
             activity,
         )
 
@@ -406,7 +410,11 @@ class WebPConversionGtkTab(
         self._streamed_skips = 0
         self._streamed_saved_bytes = 0
         self._submit(
-            replace(request, on_result=self._queue_result),
+            replace(
+                request,
+                on_result=self._queue_result,
+                on_progress=self._queue_progress,
+            ),
             activity,
         )
 

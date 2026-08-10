@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
@@ -32,6 +32,52 @@ class FileIdentity:
     inode: int
     size: int
     modified_ns: int
+
+
+@dataclass(frozen=True, slots=True)
+class TaskProgress:
+    """Completed work for one phase of a directory task."""
+
+    activity: str
+    completed: int
+    total: int
+
+    def __post_init__(self) -> None:
+        if self.total < 0:
+            raise ValueError("total must not be negative")
+        if not 0 <= self.completed <= self.total:
+            raise ValueError("completed must be between 0 and total")
+
+    @property
+    def fraction(self) -> float:
+        """Return progress as a GTK-compatible value between zero and one."""
+
+        return self.completed / self.total if self.total else 0.0
+
+
+ProgressObserver = Callable[[TaskProgress], None]
+
+
+def track_progress(
+    values: Iterable[ValueT],
+    *,
+    total: int,
+    description: str,
+    unit: str,
+    on_progress: ProgressObserver | None,
+    activity: str | None = None,
+) -> Iterator[ValueT]:
+    """Track an iterable in the console or report it to an external view."""
+
+    if on_progress is None:
+        yield from tqdm.tqdm(values, total=total, desc=description, unit=unit)
+        return
+
+    label = activity or description
+    on_progress(TaskProgress(label, 0, total))
+    for completed, value in enumerate(values, start=1):
+        yield value
+        on_progress(TaskProgress(label, completed, total))
 
 
 def file_identity(path: Path) -> FileIdentity:
@@ -214,6 +260,25 @@ class DirectoryIndexer(ABC, Generic[ValueT]):
     ) -> list[IndexedFile[ValueT]]:
         """Return analyzed files from *directory* in a stable order."""
 
+    def index_with_progress(
+        self,
+        directory: Path,
+        *,
+        max_workers: int | None = None,
+        memory_limit_mb: int | None = None,
+        on_progress: ProgressObserver | None = None,
+    ) -> list[IndexedFile[ValueT]]:
+        """Index files, allowing implementations to expose phase progress.
+
+        Existing indexers remain compatible by ignoring the optional observer.
+        """
+
+        return self.index(
+            directory,
+            max_workers=max_workers,
+            memory_limit_mb=memory_limit_mb,
+        )
+
 
 class NaturalPathOrderer:
     """Order paths using the project's natural numeric sort."""
@@ -291,6 +356,7 @@ class RecursiveDirectoryIndexer(DirectoryIndexer[ValueT]):
         *,
         max_workers: int | None = None,
         memory_limit_mb: int | None = None,
+        on_progress: ProgressObserver | None = None,
     ) -> list[IndexedFile[ValueT]]:
         validate_optional_positive("max_workers", max_workers)
         validate_optional_positive("memory_limit_mb", memory_limit_mb)
@@ -305,6 +371,7 @@ class RecursiveDirectoryIndexer(DirectoryIndexer[ValueT]):
                     if memory_limit_mb is not None
                     else automatic_memory_limit()
                 ),
+                on_progress=on_progress,
             )
 
         indexed: list[IndexedFile[ValueT]] = []
@@ -313,12 +380,32 @@ class RecursiveDirectoryIndexer(DirectoryIndexer[ValueT]):
             paths,
             max_workers=max_workers,
         )
-        for result in tqdm.tqdm(
-            results, total=len(paths), desc=f"indexing {directory}", unit="file"
+        for result in track_progress(
+            results,
+            total=len(paths),
+            description=f"indexing {directory}",
+            unit="file",
+            on_progress=on_progress,
+            activity="Indexing images",
         ):
             if result is not None:
                 indexed.append(result)
         return indexed
+
+    def index_with_progress(
+        self,
+        directory: Path,
+        *,
+        max_workers: int | None = None,
+        memory_limit_mb: int | None = None,
+        on_progress: ProgressObserver | None = None,
+    ) -> list[IndexedFile[ValueT]]:
+        return self.index(
+            directory,
+            max_workers=max_workers,
+            memory_limit_mb=memory_limit_mb,
+            on_progress=on_progress,
+        )
 
     def _index_with_memory_limit(
         self,
@@ -326,13 +413,21 @@ class RecursiveDirectoryIndexer(DirectoryIndexer[ValueT]):
         *,
         max_workers: int | None,
         memory_limit: int,
+        on_progress: ProgressObserver | None,
     ) -> list[IndexedFile[ValueT]]:
         """Analyze fitting files while aggregate estimated memory stays bounded."""
 
         candidates: list[_IndexCandidate] = []
         ordered: list[IndexedFile[ValueT] | None] = [None] * len(paths)
         for index, path in enumerate(
-            tqdm.tqdm(paths, desc="inspecting", unit="file")
+            track_progress(
+                paths,
+                total=len(paths),
+                description="inspecting",
+                unit="file",
+                on_progress=on_progress,
+                activity="Inspecting images",
+            )
         ):
             candidate = self._estimate_file_safely(index, path)
             if candidate is not None and candidate.estimated_peak_bytes <= memory_limit:
@@ -345,8 +440,13 @@ class RecursiveDirectoryIndexer(DirectoryIndexer[ValueT]):
             capacity=memory_limit,
             max_workers=max_workers,
         )
-        for candidate, result in tqdm.tqdm(
-            results, total=len(candidates), desc="indexing", unit="file"
+        for candidate, result in track_progress(
+            results,
+            total=len(candidates),
+            description="indexing",
+            unit="file",
+            on_progress=on_progress,
+            activity="Indexing images",
         ):
             ordered[candidate.index] = result
 

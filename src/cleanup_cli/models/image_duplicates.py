@@ -26,6 +26,7 @@ from .abstractions import (
     ImageDirectoryScanner,
     IndexedFile,
     MeasuredValueT,
+    ProgressObserver,
     RecursiveDirectoryIndexer,
     file_identity,
     quarantine_if_unchanged,
@@ -509,12 +510,14 @@ class DirectoryDeduplicator(Generic[SignatureT]):
         options: DeduplicationOptions | None = None,
         *,
         on_result: DuplicateObserver | None = None,
+        on_progress: ProgressObserver | None = None,
     ) -> list[Duplicate]:
         request = options or DeduplicationOptions()
-        images = self._indexer.index(
+        images = self._indexer.index_with_progress(
             directory,
             max_workers=request.max_workers,
             memory_limit_mb=request.memory_limit_mb,
+            on_progress=on_progress,
         )
         reported: dict[Path, Duplicate] = {}
 
@@ -559,6 +562,7 @@ def index_images(
     *,
     max_workers: int | None = None,
     memory_limit_mb: int | None = None,
+    on_progress: ProgressObserver | None = None,
 ) -> list[tuple[Path, ImageSignature]]:
     """Recursively hash decodable images in natural path order."""
 
@@ -574,6 +578,7 @@ def index_images(
             Path(directory),
             max_workers=max_workers,
             memory_limit_mb=memory_limit_mb,
+            on_progress=on_progress,
         )
     ]
 
@@ -622,6 +627,7 @@ def deduplicate_directory(
     max_workers: int | None = None,
     memory_limit_mb: int | None = None,
     on_result: DuplicateObserver | None = None,
+    on_progress: ProgressObserver | None = None,
 ) -> list[Duplicate]:
     """Find duplicates recursively and optionally delete earlier paths."""
 
@@ -632,4 +638,9 @@ def deduplicate_directory(
         max_workers=max_workers,
         memory_limit_mb=memory_limit_mb,
     )
-    return model.deduplicate(Path(directory), options, on_result=on_result)
+    return model.deduplicate(
+        Path(directory),
+        options,
+        on_result=on_result,
+        on_progress=on_progress,
+    )

@@ -38,6 +38,22 @@ def _write_webp(path: Path, size: tuple[int, int] = (32, 24)) -> None:
     Image.fromarray(pixels, mode="RGBA").save(path, format="WEBP")
 
 
+def _write_jpeg(path: Path, size: tuple[int, int] = (128, 96)) -> None:
+    image = Image.effect_noise(size, 100).convert("RGB")
+    image.save(path, format="JPEG", quality=100)
+
+
+def _write_mpo(path: Path, size: tuple[int, int] = (128, 96)) -> None:
+    primary = Image.effect_noise(size, 100).convert("RGB")
+    auxiliary = Image.new("L", (size[0] // 2, size[1] // 2), 128)
+    primary.save(
+        path,
+        format="MPO",
+        save_all=True,
+        append_images=[auxiliary],
+    )
+
+
 def test_converts_recursively_in_place_without_changing_dimensions(tmp_path: Path) -> None:
     nested = tmp_path / "album"
     nested.mkdir()
@@ -57,6 +73,44 @@ def test_converts_recursively_in_place_without_changing_dimensions(tmp_path: Pat
     with Image.open(destination) as image:
         assert image.format == "WEBP"
         assert image.size == (128, 96)
+
+
+def test_converts_a_single_frame_jpeg(tmp_path: Path) -> None:
+    source = tmp_path / "photo.jpeg"
+    _write_jpeg(source)
+    original_size = source.stat().st_size
+
+    result = convert_directory_to_webp(tmp_path, replace=True)
+
+    assert len(result.conversions) == 1
+    assert result.skips == ()
+    destination = source.with_suffix(".webp")
+    assert not source.exists()
+    assert destination.exists()
+    assert destination.stat().st_size < original_size
+
+
+def test_identifies_mpo_jpeg_and_explains_multi_picture_skip(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "spatial-photo.jpeg"
+    _write_mpo(source)
+
+    inspection = PillowWebPCodec().inspect(source)
+    assert inspection.image_format == "MPO"
+    assert inspection.frame_count == 2
+    assert inspection.is_multi_frame is True
+
+    result = convert_directory_to_webp(tmp_path, replace=True)
+
+    assert result.conversions == ()
+    assert len(result.skips) == 1
+    assert result.skips[0].reason == (
+        "MPO (multi-picture JPEG) contains 2 embedded images; conversion is skipped "
+        "to avoid discarding embedded image data"
+    )
+    assert source.exists()
+    assert not source.with_suffix(".webp").exists()
 
 
 def test_reports_each_completed_result_and_total_saved_bytes(tmp_path: Path) -> None:

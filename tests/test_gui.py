@@ -20,6 +20,7 @@ from cleanup_cli.controllers import (
 from cleanup_cli.models import (
     DeduplicationOptions,
     Duplicate,
+    TaskProgress,
     WebPConversion,
     WebPDirectoryConversionResult,
     WebPOptions,
@@ -382,6 +383,79 @@ def test_controller_execution_runs_off_the_gtk_thread() -> None:
         tab._summary_label.get_text()
         == "0 duplicates found | 0 bytes would be saved"
     )
+    tab.shutdown()
+
+
+@requires_display
+def test_gui_progress_bar_updates_resets_and_hides_with_task_lifecycle() -> None:
+    controller = RecordingController(DeduplicationResult((), deleted=False))
+    tab = DeduplicationGtkTab(controller)
+    tab.build()
+
+    assert tab._progress_bar is not None
+    assert tab._activity_box is not None
+    assert not tab._activity_box.get_visible()
+
+    tab._set_busy(True, "Working...")
+    assert tab._activity_box.get_visible()
+    assert tab._progress_bar.get_fraction() == 0.0
+    assert tab._progress_bar.get_text() == "Preparing..."
+
+    assert tab._apply_progress(TaskProgress("Indexing images", 2, 4)) is GLib.SOURCE_REMOVE
+    assert tab._activity_label is not None
+    assert tab._activity_label.get_text() == "Indexing images"
+    assert tab._progress_bar.get_fraction() == pytest.approx(0.5)
+    assert tab._progress_bar.get_text() == "2 of 4 files"
+
+    tab._set_busy(False, "")
+    assert not tab._activity_box.get_visible()
+
+    # A second operation starts from a clean determinate state.
+    tab._set_busy(True, "Starting again...")
+    assert tab._progress_bar.get_fraction() == 0.0
+    assert tab._progress_bar.get_text() == "Preparing..."
+    tab.shutdown()
+
+
+@requires_display
+def test_deduplication_tab_submits_gui_progress_observer() -> None:
+    controller = RecordingController(DeduplicationResult((), deleted=False))
+    tab = DeduplicationGtkTab(controller)
+    tab.build()
+
+    tab._submit_with_results(
+        DeduplicationGtkTab.create_request("/photos"),
+        "Finding duplicate images...",
+    )
+    deadline = time.monotonic() + 2
+    while not controller.requests and time.monotonic() < deadline:
+        time.sleep(0.005)
+
+    assert controller.requests
+    submitted = controller.requests[0]
+    assert isinstance(submitted, DeduplicationRequest)
+    assert submitted.on_progress is not None
+    tab.shutdown()
+
+
+@requires_display
+def test_webp_tab_submits_gui_progress_observer() -> None:
+    controller = RecordingController(WebPDirectoryConversionResult((), ()))
+    tab = WebPConversionGtkTab(controller)
+    tab.build()
+
+    tab._submit_with_results(
+        WebPConversionGtkTab.create_request("/photos"),
+        "Checking WebP conversions...",
+    )
+    deadline = time.monotonic() + 2
+    while not controller.requests and time.monotonic() < deadline:
+        time.sleep(0.005)
+
+    assert controller.requests
+    submitted = controller.requests[0]
+    assert isinstance(submitted, WebPConversionRequest)
+    assert submitted.on_progress is not None
     tab.shutdown()
 
 

@@ -13,6 +13,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Gio, GLib, Gtk, Pango  # noqa: E402  # pyright: ignore[reportMissingImports, reportAttributeAccessIssue]
 
 from ...controllers import Controller
+from ...models import TaskProgress
 
 
 RequestT = TypeVar("RequestT")
@@ -243,6 +244,7 @@ class ControllerGtkTab(Generic[RequestT, ResultT]):
         self._run_button: Gtk.Button | None = None
         self._spinner: Gtk.Spinner | None = None
         self._activity_label: Gtk.Label | None = None
+        self._progress_bar: Gtk.ProgressBar | None = None
         self._activity_box: Gtk.Box | None = None
         self._error_revealer: Gtk.Revealer | None = None
         self._error_label: Gtk.Label | None = None
@@ -280,11 +282,21 @@ class ControllerGtkTab(Generic[RequestT, ResultT]):
         )
         page.append(self._error_revealer)
 
-        activity = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        activity = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        activity_heading = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=8,
+        )
         self._spinner = Gtk.Spinner()
         self._activity_label = Gtk.Label(xalign=0)
-        activity.append(self._spinner)
-        activity.append(self._activity_label)
+        activity_heading.append(self._spinner)
+        activity_heading.append(self._activity_label)
+        activity.append(activity_heading)
+        self._progress_bar = Gtk.ProgressBar(
+            show_text=True,
+            hexpand=True,
+        )
+        activity.append(self._progress_bar)
         activity.set_visible(False)
         self._activity_box = activity
         page.append(activity)
@@ -340,6 +352,21 @@ class ControllerGtkTab(Generic[RequestT, ResultT]):
     def _schedule_completion(self, future: Future[ResultT]) -> None:
         GLib.idle_add(self._complete, future)
 
+    def _queue_progress(self, progress: TaskProgress) -> None:
+        GLib.idle_add(self._apply_progress, progress)
+
+    def _apply_progress(self, progress: TaskProgress) -> bool:
+        if self._closed:
+            return GLib.SOURCE_REMOVE
+        if self._activity_label is not None:
+            self._activity_label.set_text(progress.activity)
+        if self._progress_bar is not None:
+            self._progress_bar.set_fraction(progress.fraction)
+            self._progress_bar.set_text(
+                f"{progress.completed} of {progress.total} files"
+            )
+        return GLib.SOURCE_REMOVE
+
     def _complete(self, future: Future[ResultT]) -> bool:
         if self._closed:
             return GLib.SOURCE_REMOVE
@@ -363,6 +390,9 @@ class ControllerGtkTab(Generic[RequestT, ResultT]):
                 self._spinner.stop()
         if self._activity_label is not None:
             self._activity_label.set_text(activity)
+        if self._progress_bar is not None and busy:
+            self._progress_bar.set_fraction(0.0)
+            self._progress_bar.set_text("Preparing...")
         if self._activity_box is not None:
             self._activity_box.set_visible(busy)
 
