@@ -30,6 +30,7 @@ from .abstractions import (
     file_identity,
     quarantine_if_unchanged,
 )
+from .image_memory import estimate_peak_bytes
 
 
 PHASH_SIZE = 32
@@ -55,11 +56,14 @@ class DeduplicationOptions:
     threshold: int = 0
     delete: bool = False
     max_workers: int | None = None
+    memory_limit_mb: int | None = None
 
     def __post_init__(self) -> None:
         _validate_threshold(self.threshold)
         if self.max_workers is not None and self.max_workers < 1:
             raise ValueError("max_workers must be greater than 0")
+        if self.memory_limit_mb is not None and self.memory_limit_mb < 1:
+            raise ValueError("memory_limit_mb must be greater than 0")
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,6 +176,14 @@ def image_signature(path: str | Path) -> ImageSignature:
 
 class PillowImageSignatureAnalyzer:
     """Build image signatures using Pillow, NumPy, and SciPy transforms."""
+
+    def estimate_memory(self, path: Path) -> int:
+        """Estimate decode and normalization memory from the image header."""
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(path) as image:
+                return estimate_peak_bytes(image.size)
 
     def analyze(self, path: Path) -> ImageSignature:
         return image_signature(path)
@@ -480,10 +492,20 @@ class DirectoryDeduplicator(Generic[SignatureT]):
         options: DeduplicationOptions | None = None,
     ) -> list[Duplicate]:
         request = options or DeduplicationOptions()
-        if request.max_workers is None:
+        if request.memory_limit_mb is None and request.max_workers is None:
             images = self._indexer.index(directory)
-        else:
+        elif request.memory_limit_mb is None:
             images = self._indexer.index(directory, max_workers=request.max_workers)
+        elif request.max_workers is None:
+            images = self._indexer.index(
+                directory, memory_limit_mb=request.memory_limit_mb
+            )
+        else:
+            images = self._indexer.index(
+                directory,
+                max_workers=request.max_workers,
+                memory_limit_mb=request.memory_limit_mb,
+            )
         duplicates = self._detector.find(images, request.threshold)
 
         if request.delete:
@@ -501,13 +523,23 @@ class ImageIndexAdapter(DirectoryIndexer[int | ImageSignature]):
     """Expose the tuple-based image index API through the model contract."""
 
     def index(
-        self, directory: Path, *, max_workers: int | None = None
+        self,
+        directory: Path,
+        *,
+        max_workers: int | None = None,
+        memory_limit_mb: int | None = None,
     ) -> list[IndexedFile[int | ImageSignature]]:
+        analyzer = PillowImageSignatureAnalyzer()
         indexer = RecursiveDirectoryIndexer[int | ImageSignature](
-            PillowImageSignatureAnalyzer(),
+            analyzer,
             scanner=ImageDirectoryScanner(),
+            memory_estimator=analyzer,
         )
-        return indexer.index(directory, max_workers=max_workers)
+        return indexer.index(
+            directory,
+            max_workers=max_workers,
+            memory_limit_mb=memory_limit_mb,
+        )
 
 
 def _validate_threshold(threshold: int) -> None:
@@ -516,17 +548,26 @@ def _validate_threshold(threshold: int) -> None:
 
 
 def index_images(
-    directory: str | Path, *, max_workers: int | None = None
+    directory: str | Path,
+    *,
+    max_workers: int | None = None,
+    memory_limit_mb: int | None = None,
 ) -> list[tuple[Path, ImageSignature]]:
     """Recursively hash decodable images in natural path order."""
 
+    analyzer = PillowImageSignatureAnalyzer()
     indexer = RecursiveDirectoryIndexer(
-        PillowImageSignatureAnalyzer(),
+        analyzer,
         scanner=ImageDirectoryScanner(),
+        memory_estimator=analyzer,
     )
     return [
         (image.path, image.value)
-        for image in indexer.index(Path(directory), max_workers=max_workers)
+        for image in indexer.index(
+            Path(directory),
+            max_workers=max_workers,
+            memory_limit_mb=memory_limit_mb,
+        )
     ]
 
 
@@ -555,6 +596,7 @@ def deduplicate_directory(
     threshold: int = 0,
     delete: bool = False,
     max_workers: int | None = None,
+    memory_limit_mb: int | None = None,
 ) -> list[Duplicate]:
     """Find duplicates recursively and optionally delete earlier paths."""
 
@@ -565,6 +607,9 @@ def deduplicate_directory(
         ),
     )
     options = DeduplicationOptions(
-        threshold=threshold, delete=delete, max_workers=max_workers
+        threshold=threshold,
+        delete=delete,
+        max_workers=max_workers,
+        memory_limit_mb=memory_limit_mb,
     )
     return model.deduplicate(Path(directory), options)

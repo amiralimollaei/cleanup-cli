@@ -20,9 +20,11 @@ from .tabs import DeduplicationGtkTab, WebPConversionGtkTab
 def create_gui_view() -> GtkGuiView:
     """Compose the production models, controllers, and GTK view."""
 
+    analyzer = PillowImageSignatureAnalyzer()
     indexer = RecursiveDirectoryIndexer(
-        PillowImageSignatureAnalyzer(),
+        analyzer,
         scanner=ImageDirectoryScanner(),
+        memory_estimator=analyzer,
     )
     deduplicator = DirectoryDeduplicator(
         indexer,

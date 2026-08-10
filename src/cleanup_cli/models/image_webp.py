@@ -22,19 +22,16 @@ from .abstractions import (
     hard_link_no_clobber,
     quarantine_if_unchanged,
 )
+from .image_memory import (
+    MEBIBYTE as _MEBIBYTE,
+    available_memory_bytes as _available_memory_bytes,
+    estimate_peak_bytes as _estimate_peak_bytes,
+    format_mebibytes as _format_mebibytes,
+    memory_limit_for_available,
+)
 
 
 FrameT = TypeVar("FrameT")
-
-
-_MEBIBYTE = 1024 * 1024
-# Pillow may retain its decoded raster while its WebP plugin creates an RGB(A)
-# conversion, libwebp working buffers, and the encoded output bytes.  This is
-# intentionally more conservative than simply multiplying by channel count.
-_ESTIMATED_BYTES_PER_PIXEL = 32
-_ESTIMATED_FIXED_BYTES = 8 * _MEBIBYTE
-_FALLBACK_MEMORY_LIMIT = 256 * _MEBIBYTE
-_MAX_AUTOMATIC_MEMORY_LIMIT = 1024 * _MEBIBYTE
 
 
 @dataclass(frozen=True)
@@ -467,59 +464,10 @@ def _temporary_webp_path(source: Path) -> Path:
     return Path(temporary_name)
 
 
-def _estimate_peak_bytes(dimensions: tuple[int, int]) -> int:
-    width, height = dimensions
-    return width * height * _ESTIMATED_BYTES_PER_PIXEL + _ESTIMATED_FIXED_BYTES
-
-
-def _format_mebibytes(byte_count: int) -> str:
-    return f"{byte_count / _MEBIBYTE:.1f} MiB"
-
-
 def _automatic_memory_limit() -> int:
     """Reserve a conservative fraction of memory currently available."""
 
-    available = _available_memory_bytes()
-    if available is None:
-        return _FALLBACK_MEMORY_LIMIT
-    return max(
-        1,
-        min(available // 4, _MAX_AUTOMATIC_MEMORY_LIMIT),
-    )
-
-
-def _available_memory_bytes() -> int | None:
-    """Best-effort host/container available-memory detection."""
-
-    candidates: list[int] = []
-    try:
-        for line in Path("/proc/meminfo").read_text().splitlines():
-            if line.startswith("MemAvailable:"):
-                candidates.append(int(line.split()[1]) * 1024)
-                break
-    except (OSError, ValueError, IndexError):
-        pass
-
-    try:
-        cgroup_limit = Path("/sys/fs/cgroup/memory.max").read_text().strip()
-        if cgroup_limit != "max":
-            limit = int(cgroup_limit)
-            usage = int(Path("/sys/fs/cgroup/memory.current").read_text().strip())
-            candidates.append(max(0, limit - usage))
-    except (OSError, ValueError):
-        pass
-
-    if candidates:
-        return min(candidates)
-
-    try:
-        pages = int(os.sysconf("SC_AVPHYS_PAGES"))
-        page_size = int(os.sysconf("SC_PAGE_SIZE"))
-        if pages > 0 and page_size > 0:
-            return pages * page_size
-    except (AttributeError, OSError, ValueError):
-        pass
-    return None
+    return memory_limit_for_available(_available_memory_bytes())
 
 
 def convert_directory_to_webp(

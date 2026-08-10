@@ -1,5 +1,5 @@
 from pathlib import Path
-from threading import Lock
+from threading import Condition, Lock
 from time import sleep
 from typing import Any, Callable
 
@@ -42,7 +42,11 @@ class StaticIndexer(DirectoryIndexer[int]):
         self.files = files
 
     def index(
-        self, directory: Path, *, max_workers: int | None = None
+        self,
+        directory: Path,
+        *,
+        max_workers: int | None = None,
+        memory_limit_mb: int | None = None,
     ) -> list[IndexedFile[int]]:
         return self.files
 
@@ -142,6 +146,88 @@ def test_recursive_indexer_analyzes_files_in_parallel_and_preserves_order(
 
     assert maximum_active > 1
     assert [item.path for item in indexed] == paths
+
+
+def test_recursive_indexer_limits_aggregate_analysis_memory(
+    tmp_path: Path,
+) -> None:
+    mebibyte = 1024 * 1024
+    paths = [tmp_path / f"image-{index}.bin" for index in range(3)]
+    estimates = {
+        paths[0]: 6 * mebibyte,
+        paths[1]: 6 * mebibyte,
+        paths[2]: 4 * mebibyte,
+    }
+    for path in paths:
+        path.write_bytes(b"image")
+
+    active_bytes = 0
+    active_jobs = 0
+    maximum_active_bytes = 0
+    maximum_active_jobs = 0
+    parallel_observed = False
+    condition = Condition()
+
+    class Estimator:
+        def estimate_memory(self, path: Path) -> int:
+            return estimates[path]
+
+    class Analyzer:
+        def analyze(self, path: Path) -> str:
+            nonlocal active_bytes, active_jobs
+            nonlocal maximum_active_bytes, maximum_active_jobs, parallel_observed
+            required = estimates[path]
+            with condition:
+                active_bytes += required
+                active_jobs += 1
+                maximum_active_bytes = max(maximum_active_bytes, active_bytes)
+                maximum_active_jobs = max(maximum_active_jobs, active_jobs)
+                if active_jobs > 1:
+                    parallel_observed = True
+                condition.notify_all()
+                condition.wait_for(lambda: parallel_observed, timeout=1)
+                active_bytes -= required
+                active_jobs -= 1
+            return path.name
+
+    indexer = RecursiveDirectoryIndexer(
+        Analyzer(),
+        scanner=StaticScanner(paths),
+        memory_estimator=Estimator(),
+        ignored_errors=(),
+    )
+
+    indexed = indexer.index(tmp_path, max_workers=3, memory_limit_mb=10)
+
+    assert [item.path for item in indexed] == paths
+    assert maximum_active_bytes <= 10 * mebibyte
+    assert maximum_active_jobs == 2
+    assert active_bytes == 0
+    assert active_jobs == 0
+
+
+def test_recursive_indexer_skips_file_that_exceeds_memory_limit(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "oversized.bin"
+    source.write_bytes(b"image")
+
+    class Estimator:
+        def estimate_memory(self, path: Path) -> int:
+            return 2 * 1024 * 1024
+
+    class Analyzer:
+        def analyze(self, path: Path) -> str:
+            raise AssertionError("oversized file must not be analyzed")
+
+    indexer = RecursiveDirectoryIndexer(
+        Analyzer(),
+        scanner=StaticScanner([source]),
+        memory_estimator=Estimator(),
+        ignored_errors=(),
+    )
+
+    assert indexer.index(tmp_path, memory_limit_mb=1) == []
 
 
 def test_recursive_indexer_bounds_submitted_work(

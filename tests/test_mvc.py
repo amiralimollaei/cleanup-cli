@@ -44,7 +44,11 @@ class RecordingController(Controller[RequestT, ResultT], Generic[RequestT, Resul
 
 class StaticIndexer(DirectoryIndexer[int]):
     def index(
-        self, directory: Path, *, max_workers: int | None = None
+        self,
+        directory: Path,
+        *,
+        max_workers: int | None = None,
+        memory_limit_mb: int | None = None,
     ) -> list[IndexedFile[int]]:
         return [
             IndexedFile(directory / "1.jpg", 1),
@@ -106,14 +110,28 @@ def test_cli_view_builds_deduplication_request_and_renders_result() -> None:
     )
 
     exit_code = view.run(
-        ["deduplicate", "/photos", "--threshold", "4", "--max-workers", "3"]
+        [
+            "deduplicate",
+            "/photos",
+            "--threshold",
+            "4",
+            "--max-workers",
+            "3",
+            "--memory-limit-mb",
+            "256",
+        ]
     )
 
     assert exit_code == 0
     assert duplicate_controller.requests == [
         DeduplicationRequest(
             Path("/photos"),
-            DeduplicationOptions(threshold=4, delete=False, max_workers=3),
+            DeduplicationOptions(
+                threshold=4,
+                delete=False,
+                max_workers=3,
+                memory_limit_mb=256,
+            ),
         )
     ]
     assert output.getvalue().splitlines() == [
@@ -193,6 +211,19 @@ def test_cli_view_rejects_non_positive_webp_memory_limit() -> None:
 
     with pytest.raises(SystemExit):
         view.run(["webp", "/photos", "--memory-limit-mb", "0"])
+
+
+def test_cli_view_rejects_non_positive_deduplication_memory_limit() -> None:
+    duplicate_controller = RecordingController(DeduplicationResult((), False))
+    webp_controller = RecordingController(WebPDirectoryConversionResult((), ()))
+    view = ArgparseCliView(
+        DeduplicateCommand(duplicate_controller),
+        WebPCommand(webp_controller),
+        output=StringIO(),
+    )
+
+    with pytest.raises(SystemExit):
+        view.run(["deduplicate", "/photos", "--memory-limit-mb", "0"])
 
 
 def test_cli_view_rejects_commandless_directory_input() -> None:

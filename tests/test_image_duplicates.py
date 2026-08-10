@@ -349,6 +349,30 @@ def test_oversized_images_are_skipped_without_decompression_bomb_warning(
     )
 
 
+def test_signature_memory_estimate_reads_only_image_header(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "photo.pgm"
+    _write_pgm(source, _pattern(32))
+
+    def fail_if_loaded(image: Image.Image) -> None:
+        raise AssertionError("memory estimation must not decode pixels")
+
+    monkeypatch.setattr(Image.Image, "load", fail_if_loaded)
+
+    estimate = image_duplicates.PillowImageSignatureAnalyzer().estimate_memory(source)
+
+    assert estimate > 32 * 32 * 4
+
+
+@pytest.mark.parametrize("memory_limit_mb", [0, -1])
+def test_rejects_invalid_deduplication_memory_limit(
+    tmp_path: Path, memory_limit_mb: int
+) -> None:
+    with pytest.raises(ValueError, match="memory_limit_mb must be greater than 0"):
+        deduplicate_directory(tmp_path, memory_limit_mb=memory_limit_mb)
+
+
 def test_dry_run_keeps_files_and_delete_removes_only_earlier_match(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

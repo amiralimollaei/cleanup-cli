@@ -44,6 +44,8 @@ class DeduplicationGtkTab(
         self._threshold: Gtk.SpinButton | None = None
         self._automatic_workers: Gtk.CheckButton | None = None
         self._workers: Gtk.SpinButton | None = None
+        self._automatic_memory: Gtk.CheckButton | None = None
+        self._memory: Gtk.SpinButton | None = None
         self._delete: Gtk.Switch | None = None
 
     @staticmethod
@@ -53,6 +55,7 @@ class DeduplicationGtkTab(
         threshold: int = 0,
         delete: bool = False,
         max_workers: int | None = None,
+        memory_limit_mb: int | None = None,
     ) -> DeduplicationRequest:
         path_text = str(directory).strip()
         if not path_text:
@@ -63,6 +66,7 @@ class DeduplicationGtkTab(
                 threshold=threshold,
                 delete=delete,
                 max_workers=max_workers,
+                memory_limit_mb=memory_limit_mb,
             ),
         )
 
@@ -99,8 +103,16 @@ class DeduplicationGtkTab(
         )
         add_form_row(grid, 2, "Workers", workers_box)
 
+        memory_box, self._automatic_memory, self._memory = automatic_number_control(
+            minimum=1,
+            maximum=1048576,
+            value=512,
+            unit="MiB",
+        )
+        add_form_row(grid, 3, "Memory limit", memory_box)
+
         self._delete = Gtk.Switch(halign=Gtk.Align.START, valign=Gtk.Align.CENTER)
-        add_form_row(grid, 3, "Delete duplicates", self._delete)
+        add_form_row(grid, 4, "Delete duplicates", self._delete)
 
         run_button = Gtk.Button(
             label="Find Duplicates",
@@ -110,7 +122,7 @@ class DeduplicationGtkTab(
         run_button.add_css_class("suggested-action")
         run_button.connect("clicked", self._on_run)
         self._run_button = run_button
-        grid.attach(run_button, 1, 4, 1, 1)
+        grid.attach(run_button, 1, 5, 1, 1)
         return self._page(grid)
 
     def _on_run(self, *_args: object) -> None:
@@ -142,6 +154,8 @@ class DeduplicationGtkTab(
                 self._threshold,
                 self._automatic_workers,
                 self._workers,
+                self._automatic_memory,
+                self._memory,
                 self._delete,
             )
         ):
@@ -150,17 +164,25 @@ class DeduplicationGtkTab(
         assert self._threshold is not None
         assert self._automatic_workers is not None
         assert self._workers is not None
+        assert self._automatic_memory is not None
+        assert self._memory is not None
         assert self._delete is not None
         workers = (
             None
             if self._automatic_workers.get_active()
             else self._workers.get_value_as_int()
         )
+        memory = (
+            None
+            if self._automatic_memory.get_active()
+            else self._memory.get_value_as_int()
+        )
         return self.create_request(
             self._directory.get_text(),
             threshold=self._threshold.get_value_as_int(),
             delete=self._delete.get_active(),
             max_workers=workers,
+            memory_limit_mb=memory,
         )
 
     def _render_result(self, result: DeduplicationResult) -> None:

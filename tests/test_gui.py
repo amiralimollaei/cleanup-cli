@@ -73,9 +73,15 @@ def test_deduplication_gui_request_validation_and_options() -> None:
         threshold=4,
         delete=True,
         max_workers=3,
+        memory_limit_mb=256,
     ) == DeduplicationRequest(
         Path("/photos"),
-        DeduplicationOptions(threshold=4, delete=True, max_workers=3),
+        DeduplicationOptions(
+            threshold=4,
+            delete=True,
+            max_workers=3,
+            memory_limit_mb=256,
+        ),
     )
 
     with pytest.raises(ValueError, match="select a directory"):
@@ -220,18 +226,26 @@ def test_deduplication_tab_builds_form_request_and_renders_results() -> None:
     assert tab._threshold is not None
     assert tab._automatic_workers is not None
     assert tab._workers is not None
+    assert tab._automatic_memory is not None
+    assert tab._memory is not None
     assert tab._delete is not None
     tab._directory.set_text("/photos")
     tab._threshold.set_value(4)
     tab._automatic_workers.set_active(False)
     tab._workers.set_value(3)
+    tab._automatic_memory.set_active(False)
+    tab._memory.set_value(256)
 
     request = tab._request_from_form()
     tab._render_result(controller.result)
 
     assert request == DeduplicationRequest(
         Path("/photos"),
-        DeduplicationOptions(threshold=4, max_workers=3),
+        DeduplicationOptions(
+            threshold=4,
+            max_workers=3,
+            memory_limit_mb=256,
+        ),
     )
     assert tab._result_list is not None
     assert tab._result_list.get_first_child() is not None

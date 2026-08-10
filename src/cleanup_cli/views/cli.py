@@ -83,9 +83,11 @@ class ArgparseCliView:
 def create_cli_view(*, output: TextIO | None = None) -> ArgparseCliView:
     """Compose the production models, controllers, and CLI view."""
 
+    analyzer = PillowImageSignatureAnalyzer()
     indexer = RecursiveDirectoryIndexer(
-        PillowImageSignatureAnalyzer(),
+        analyzer,
         scanner=ImageDirectoryScanner(),
+        memory_estimator=analyzer,
     )
     deduplicator = DirectoryDeduplicator(
         indexer,

@@ -152,6 +152,19 @@ The default is a dry run and does not change any files:
 cleanup-cli deduplicate /path/to/photos
 ```
 
+Before hashing, deduplication reads each image header and estimates its peak
+decode memory from its pixel dimensions. Concurrent hashes are admitted only
+while their combined estimates fit a budget derived from available memory.
+Set an explicit budget for a constrained machine or container:
+
+```console
+cleanup-cli deduplicate /path/to/photos --memory-limit-mb 512
+```
+
+Images whose individual estimates exceed the budget are ignored without being
+decoded. `--max-workers` remains an upper bound on hashing concurrency, while
+the memory budget may allow fewer workers for large images.
+
 Use `--delete` to remove the duplicates reported by the dry run:
 
 ```console
