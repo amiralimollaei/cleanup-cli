@@ -6,10 +6,10 @@ to WebP to save storage.
 ## Installation
 
 The Python environment is managed with [uv](https://docs.astral.sh/uv/).
-PyGObject is declared in `pyproject.toml`; its PyCairo dependency is captured
-in `uv.lock`. Both are installed inside the project virtual environment. GTK
-itself and the headers needed to build those Python extensions are native Linux
-packages.
+The command-line tools use the default dependencies. The optional GTK GUI is in
+the `gui` dependency group; its PyCairo dependency is captured in `uv.lock`.
+GTK itself and the headers needed to build those Python extensions are native
+Linux packages.
 
 On Fedora, install the native prerequisites first. The Python development
 package must match the version in `.python-version` (currently Python 3.12):
@@ -19,28 +19,36 @@ sudo dnf install gtk4 python3.12-devel gobject-introspection-devel \
   cairo-devel cairo-gobject-devel gcc pkgconf-pkg-config
 ```
 
-Then create/synchronize the project environment from `uv.lock`:
+For the command-line tools, create/synchronize the project environment from
+`uv.lock`:
 
 ```console
 uv sync
 ```
 
-Developers running the complete test suite should also install the optional
-SciPy group used to compare the built-in NumPy DCT fallback:
+Install the optional GUI dependencies when you want to use the GTK interface:
 
 ```console
-uv sync --group scipy
+uv sync --group gui
 ```
 
-Do not install PyGObject with the system Python for this project: `uv sync`
-builds and installs `PyGObject` and `pycairo` into `.venv`.
+Developers running the complete test suite should also install the optional
+`gui` and `scipy` groups. The SciPy group is used to compare the built-in NumPy
+DCT fallback:
+
+```console
+uv sync --group gui --group scipy
+```
+
+Do not install PyGObject with the system Python for this project; `uv sync
+--group gui` builds and installs `PyGObject` and `pycairo` into `.venv`.
 
 ## GTK graphical interface
 
 Launch the GNOME-style GTK 4 interface with:
 
 ```console
-uv run cleanup-gui
+uv run --group gui cleanup-gui
 ```
 
 The application provides **Duplicate Images** and **WebP Conversion** tabs.

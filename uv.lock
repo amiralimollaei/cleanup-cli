@@ -9,7 +9,6 @@ source = { editable = "." }
 dependencies = [
     { name = "numpy" },
     { name = "pillow" },
-    { name = "pygobject" },
     { name = "tqdm" },
 ]
 
@@ -17,6 +16,9 @@ dependencies = [
 dev = [
     { name = "pyright" },
     { name = "pytest" },
+]
+gui = [
+    { name = "pygobject" },
 ]
 scipy = [
     { name = "scipy" },
@@ -26,7 +28,6 @@ scipy = [
 requires-dist = [
     { name = "numpy", specifier = ">=2.5.1" },
     { name = "pillow", specifier = ">=11.0.0" },
-    { name = "pygobject", specifier = ">=3.56.3" },
     { name = "tqdm", specifier = ">=4.70.0" },
 ]
 
@@ -35,6 +36,7 @@ dev = [
     { name = "pyright", specifier = ">=1.0" },
     { name = "pytest", specifier = ">=8.0" },
 ]
+gui = [{ name = "pygobject", specifier = ">=3.56.3" }]
 scipy = [{ name = "scipy", specifier = ">=1.16.0" }]
 
 [[package]]
