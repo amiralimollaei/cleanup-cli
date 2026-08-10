@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Callable, Generic, TypeAlias, TypeVar
 
 import tqdm
-from PIL import Image, UnidentifiedImageError
+from PIL import Image
 
 from .abstractions import (
     DirectoryScanner,
@@ -21,14 +21,15 @@ from .abstractions import (
     hard_link_no_clobber,
     quarantine_if_unchanged,
 )
+from .image_errors import IMAGE_INPUT_ERRORS
 from .image_memory import (
-    MEBIBYTE as _MEBIBYTE,
-    available_memory_bytes as _available_memory_bytes,
-    estimate_peak_bytes as _estimate_peak_bytes,
-    format_mebibytes as _format_mebibytes,
-    memory_limit_for_available,
+    MEBIBYTE,
+    automatic_memory_limit,
+    estimate_peak_bytes,
+    format_mebibytes,
 )
 from .parallel import weighted_parallel_map
+from .validation import validate_inclusive_range, validate_optional_positive
 
 
 FrameT = TypeVar("FrameT")
@@ -86,12 +87,9 @@ class WebPOptions:
     memory_limit_mb: int | None = None
 
     def __post_init__(self) -> None:
-        if not 0 <= self.quality <= 100:
-            raise ValueError("quality must be between 0 and 100")
-        if self.max_workers is not None and self.max_workers < 1:
-            raise ValueError("max_workers must be greater than 0")
-        if self.memory_limit_mb is not None and self.memory_limit_mb < 1:
-            raise ValueError("memory_limit_mb must be greater than 0")
+        validate_inclusive_range("quality", self.quality, minimum=0, maximum=100)
+        validate_optional_positive("max_workers", self.max_workers)
+        validate_optional_positive("memory_limit_mb", self.memory_limit_mb)
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,7 +156,7 @@ class PillowWebPCodec(WebPCodec[Image.Image]):
                     dimensions=dimensions,
                     is_webp=image.format == "WEBP",
                     is_multi_frame=getattr(image, "n_frames", 1) > 1,
-                    estimated_peak_bytes=_estimate_peak_bytes(dimensions),
+                    estimated_peak_bytes=estimate_peak_bytes(dimensions),
                 )
 
     def decode(self, path: Path) -> DecodedImage[Image.Image]:
@@ -223,9 +221,9 @@ class WebPDirectoryConverter(Generic[FrameT]):
 
         paths = list(self._scanner.scan(directory))
         memory_limit = (
-            request.memory_limit_mb * _MEBIBYTE
+            request.memory_limit_mb * MEBIBYTE
             if request.memory_limit_mb is not None
-            else _automatic_memory_limit()
+            else automatic_memory_limit()
         )
 
         # Keep one slot per scanned path so inspection and worker results can
@@ -242,8 +240,8 @@ class WebPDirectoryConverter(Generic[FrameT]):
                     skip = WebPSkip(
                         path,
                         "estimated conversion memory "
-                        f"({_format_mebibytes(required)}) exceeds limit "
-                        f"({_format_mebibytes(memory_limit)})",
+                        f"({format_mebibytes(required)}) exceeds limit "
+                        f"({format_mebibytes(memory_limit)})",
                     )
                     ordered_results[index] = skip
                     if on_result is not None:
@@ -296,15 +294,7 @@ class WebPDirectoryConverter(Generic[FrameT]):
             if os.path.lexists(destination):
                 return WebPSkip(path, f"destination exists: {destination}")
             return _ConversionCandidate(index, path, identity, inspection)
-        except (
-            UnidentifiedImageError,
-            OSError,
-            EOFError,
-            StopIteration,
-            ValueError,
-            Image.DecompressionBombWarning,
-            Image.DecompressionBombError,
-        ):
+        except IMAGE_INPUT_ERRORS:
             return None
 
     def _convert_candidates(
@@ -342,15 +332,7 @@ class WebPDirectoryConverter(Generic[FrameT]):
     ) -> WebPConversion | WebPSkip | None:
         try:
             result = self._convert_file(candidate, options)
-        except (
-            UnidentifiedImageError,
-            OSError,
-            EOFError,
-            StopIteration,
-            ValueError,
-            Image.DecompressionBombWarning,
-            Image.DecompressionBombError,
-        ):
+        except IMAGE_INPUT_ERRORS:
             # Directory scans commonly include non-images and unsupported files.
             return None
 
@@ -432,12 +414,6 @@ def _temporary_webp_path(source: Path) -> Path:
     )
     os.close(file_descriptor)
     return Path(temporary_name)
-
-
-def _automatic_memory_limit() -> int:
-    """Reserve a conservative fraction of memory currently available."""
-
-    return memory_limit_for_available(_available_memory_bytes())
 
 
 def convert_directory_to_webp(

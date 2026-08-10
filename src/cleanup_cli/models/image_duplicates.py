@@ -31,6 +31,7 @@ from .abstractions import (
     quarantine_if_unchanged,
 )
 from .image_memory import estimate_peak_bytes
+from .validation import validate_inclusive_range, validate_optional_positive
 
 
 PHASH_SIZE = 32
@@ -74,10 +75,8 @@ class DeduplicationOptions:
 
     def __post_init__(self) -> None:
         _validate_threshold(self.threshold)
-        if self.max_workers is not None and self.max_workers < 1:
-            raise ValueError("max_workers must be greater than 0")
-        if self.memory_limit_mb is not None and self.memory_limit_mb < 1:
-            raise ValueError("memory_limit_mb must be greater than 0")
+        validate_optional_positive("max_workers", self.max_workers)
+        validate_optional_positive("memory_limit_mb", self.memory_limit_mb)
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +86,9 @@ class ImageSignature:
     phash: int
     average_rgb: tuple[int, int, int]
     resolution: tuple[int, int] = (0, 0)
+
+
+PHashValue: TypeAlias = int | ImageSignature
 
 
 @dataclass(frozen=True, order=True, slots=True)
@@ -209,9 +211,7 @@ def hamming_distance(left: int, right: int) -> int:
     return (left ^ right).bit_count()
 
 
-def _signature_distance(
-    left: int | ImageSignature, right: int | ImageSignature
-) -> int:
+def _signature_distance(left: PHashValue, right: PHashValue) -> int:
     if isinstance(left, int) and isinstance(right, int):
         return hamming_distance(left, right)
     if not isinstance(left, ImageSignature) or not isinstance(right, ImageSignature):
@@ -227,9 +227,7 @@ def _signature_distance(
     return max(structure, color)
 
 
-def image_quality_key(
-    image: IndexedFile[SignatureT],
-) -> ImageQuality:
+def image_quality_key(image: IndexedFile[SignatureT]) -> ImageQuality:
     """Rank an image by resolution, then by its encoded file size.
 
     The indexer already records the file identity, so using its size avoids a
@@ -239,7 +237,9 @@ def image_quality_key(
     """
 
     resolution = (
-        image.value.resolution if isinstance(image.value, ImageSignature) else (0, 0)
+        image.value.resolution
+        if isinstance(image.value, ImageSignature)
+        else (0, 0)
     )
     pixels = resolution[0] * resolution[1]
     size = image.identity.size if image.identity is not None else 0
@@ -252,12 +252,12 @@ def image_quality_key(
 
 
 class ImageSignatureDistance:
-    """Compare legacy pHashes or full structural and color signatures."""
+    """Compare raw pHashes or structural and color image signatures."""
 
     def distance(
         self,
-        left: int | ImageSignature,
-        right: int | ImageSignature,
+        left: PHashValue,
+        right: PHashValue,
     ) -> int:
         return _signature_distance(left, right)
 
@@ -335,15 +335,11 @@ class BandedPHashIndex:
             {} for _ in range(bands)
         ]
 
-    @staticmethod
-    def _phash(value: int | ImageSignature) -> int:
-        return value.phash if isinstance(value, ImageSignature) else value
-
-    def candidates(self, value: int | ImageSignature) -> Iterable[int]:
+    def candidates(self, value: PHashValue) -> Iterable[int]:
         if self._exhaustive is not None:
             return self._exhaustive.candidates(value)
 
-        phash = self._phash(value)
+        phash = value if isinstance(value, int) else value.phash
         if len(self._tables) == 1:
             bucket = self._tables[0].get(phash)
             if bucket is None:
@@ -375,12 +371,12 @@ class BandedPHashIndex:
             return (first,) if isinstance(first, int) else first
         return sorted(ranks)
 
-    def add(self, value: int | ImageSignature, rank: int) -> None:
+    def add(self, value: PHashValue, rank: int) -> None:
         if self._exhaustive is not None:
             self._exhaustive.add(value, rank)
             return
 
-        phash = self._phash(value)
+        phash = value if isinstance(value, int) else value.phash
         if len(self._tables) == 1:
             self._add_rank(self._tables[0], phash, rank)
             return
@@ -541,45 +537,21 @@ class DirectoryDeduplicator(Generic[SignatureT]):
             if on_result is not None:
                 on_result(duplicate)
 
-        if request.delete or on_result is not None:
-            duplicates = self._detector.find(
-                images,
-                request.threshold,
-                on_duplicate=handle,
-            )
-        else:
-            # Preserve compatibility with injected detectors that implement
-            # the original two-argument protocol.
-            duplicates = self._detector.find(images, request.threshold)
+        duplicates = self._detector.find(
+            images,
+            request.threshold,
+            on_duplicate=handle,
+        )
         return [reported.get(duplicate.removed, duplicate) for duplicate in duplicates]
 
 
-class ImageIndexAdapter(DirectoryIndexer[int | ImageSignature]):
-    """Expose the tuple-based image index API through the model contract."""
-
-    def index(
-        self,
-        directory: Path,
-        *,
-        max_workers: int | None = None,
-        memory_limit_mb: int | None = None,
-    ) -> list[IndexedFile[int | ImageSignature]]:
-        analyzer = PillowImageSignatureAnalyzer()
-        indexer = RecursiveDirectoryIndexer[int | ImageSignature](
-            analyzer,
-            scanner=ImageDirectoryScanner(),
-            memory_estimator=analyzer,
-        )
-        return indexer.index(
-            directory,
-            max_workers=max_workers,
-            memory_limit_mb=memory_limit_mb,
-        )
-
-
 def _validate_threshold(threshold: int) -> None:
-    if not 0 <= threshold <= PHASH_BITS:
-        raise ValueError(f"threshold must be between 0 and {PHASH_BITS}")
+    validate_inclusive_range(
+        "threshold",
+        threshold,
+        minimum=0,
+        maximum=PHASH_BITS,
+    )
 
 
 def index_images(
@@ -606,8 +578,25 @@ def index_images(
     ]
 
 
+def create_image_deduplicator() -> DirectoryDeduplicator[ImageSignature]:
+    """Build the production image deduplication service."""
+
+    analyzer = PillowImageSignatureAnalyzer()
+    indexer = RecursiveDirectoryIndexer(
+        analyzer,
+        scanner=ImageDirectoryScanner(),
+        memory_estimator=analyzer,
+    )
+    detector = QualityAwareDuplicateDetector[ImageSignature](
+        ImageSignatureDistance(),
+        image_quality_key,
+        BandedPHashIndex,
+    )
+    return DirectoryDeduplicator(indexer, detector)
+
+
 def find_duplicates(
-    images: Sequence[tuple[Path, int | ImageSignature]], threshold: int = 0
+    images: Sequence[tuple[Path, PHashValue]], threshold: int = 0
 ) -> list[Duplicate]:
     """Choose duplicates while retaining the highest-quality matching image.
 
@@ -636,12 +625,7 @@ def deduplicate_directory(
 ) -> list[Duplicate]:
     """Find duplicates recursively and optionally delete earlier paths."""
 
-    model = DirectoryDeduplicator(
-        ImageIndexAdapter(),
-        QualityAwareDuplicateDetector(
-            ImageSignatureDistance(), image_quality_key, BandedPHashIndex
-        ),
-    )
+    model = create_image_deduplicator()
     options = DeduplicationOptions(
         threshold=threshold,
         delete=delete,

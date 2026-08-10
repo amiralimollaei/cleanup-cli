@@ -11,11 +11,12 @@ import tempfile
 from typing import Generic, Protocol, TypeVar
 
 import tqdm
-from PIL import Image, UnidentifiedImageError
 
+from .image_errors import IMAGE_INPUT_ERRORS
 from .image_memory import MEBIBYTE, automatic_memory_limit
 from .parallel import ordered_parallel_map, weighted_parallel_map
 from .path_sort import sort_numbered_paths
+from .validation import validate_optional_positive
 
 
 ValueT = TypeVar("ValueT")
@@ -275,16 +276,7 @@ class RecursiveDirectoryIndexer(DirectoryIndexer[ValueT]):
         scanner: DirectoryScanner | None = None,
         orderer: PathOrderer | None = None,
         memory_estimator: FileMemoryEstimator | None = None,
-        ignored_errors: tuple[type[Exception], ...] = (
-            UnidentifiedImageError,
-            OSError,
-            EOFError,
-            StopIteration,
-            ValueError,
-            IndexError,
-            Image.DecompressionBombWarning,
-            Image.DecompressionBombError,
-        ),
+        ignored_errors: tuple[type[Exception], ...] = IMAGE_INPUT_ERRORS,
     ) -> None:
         self._analyzer = analyzer
         if scanner is not None and orderer is not None:
@@ -300,10 +292,8 @@ class RecursiveDirectoryIndexer(DirectoryIndexer[ValueT]):
         max_workers: int | None = None,
         memory_limit_mb: int | None = None,
     ) -> list[IndexedFile[ValueT]]:
-        if max_workers is not None and max_workers < 1:
-            raise ValueError("max_workers must be greater than 0")
-        if memory_limit_mb is not None and memory_limit_mb < 1:
-            raise ValueError("memory_limit_mb must be greater than 0")
+        validate_optional_positive("max_workers", max_workers)
+        validate_optional_positive("memory_limit_mb", memory_limit_mb)
 
         paths = list(self._scanner.scan(directory))
         if self._memory_estimator is not None:

@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from cleanup_cli.models import image_webp
+from cleanup_cli.models import image_memory, image_webp
 from cleanup_cli import convert_directory_to_webp
 from cleanup_cli.models.image_webp import (
     DecodedImage,
@@ -220,9 +220,13 @@ def test_automatic_memory_limit_uses_conservative_available_memory_fraction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     gibibyte = 1024 * 1024 * 1024
-    monkeypatch.setattr(image_webp, "_available_memory_bytes", lambda: 2 * gibibyte)
+    monkeypatch.setattr(
+        image_memory,
+        "available_memory_bytes",
+        lambda: 2 * gibibyte,
+    )
 
-    assert image_webp._automatic_memory_limit() == gibibyte // 2
+    assert image_memory.automatic_memory_limit() == gibibyte // 2
 
 
 def test_skips_image_that_cannot_fit_budget_without_decoding(tmp_path: Path) -> None:

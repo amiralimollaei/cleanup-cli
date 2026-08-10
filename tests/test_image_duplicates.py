@@ -378,7 +378,7 @@ def test_rejects_invalid_deduplication_memory_limit(
 
 
 def test_dry_run_keeps_files_and_delete_removes_only_earlier_match(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     first = tmp_path / "photo-1.pgm"
     last = tmp_path / "photo-2.pgm"
@@ -388,15 +388,34 @@ def test_dry_run_keeps_files_and_delete_removes_only_earlier_match(
         IndexedFile(first, 123, file_identity(first)),
         IndexedFile(last, 123, file_identity(last)),
     ]
-    monkeypatch.setattr(
-        "cleanup_cli.models.image_duplicates.ImageIndexAdapter.index",
-        lambda self, directory, *, max_workers=None, memory_limit_mb=None: indexed,
+
+    class StaticIndexer(DirectoryIndexer[int]):
+        def __init__(self, images: list[IndexedFile[int]]) -> None:
+            self._images = images
+
+        def index(
+            self,
+            directory: Path,
+            *,
+            max_workers: int | None = None,
+            memory_limit_mb: int | None = None,
+        ) -> list[IndexedFile[int]]:
+            return self._images
+
+    service = image_duplicates.DirectoryDeduplicator(
+        StaticIndexer(indexed),
+        image_duplicates.QualityAwareDuplicateDetector(
+            image_duplicates.ImageSignatureDistance()
+        ),
     )
 
-    assert deduplicate_directory(tmp_path) == [Duplicate(first, last, 0)]
+    assert service.deduplicate(tmp_path) == [Duplicate(first, last, 0)]
     assert first.exists() and last.exists()
 
-    deduplicate_directory(tmp_path, delete=True)
+    service.deduplicate(
+        tmp_path,
+        image_duplicates.DeduplicationOptions(delete=True),
+    )
     assert not first.exists()
     assert last.exists()
 

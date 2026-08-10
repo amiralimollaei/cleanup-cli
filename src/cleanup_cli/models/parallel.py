@@ -8,6 +8,8 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 import os
 from typing import TypeVar
 
+from .validation import validate_optional_positive
+
 
 InputT = TypeVar("InputT")
 ResultT = TypeVar("ResultT")
@@ -16,8 +18,7 @@ ResultT = TypeVar("ResultT")
 def worker_count(configured: int | None) -> int:
     """Resolve an optional worker limit using ThreadPoolExecutor's policy."""
 
-    if configured is not None and configured < 1:
-        raise ValueError("max_workers must be greater than 0")
+    validate_optional_positive("max_workers", configured)
     return configured or min(32, (os.cpu_count() or 1) + 4)
 
 

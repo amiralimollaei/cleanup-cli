@@ -436,28 +436,48 @@ def add_form_row(
     grid.attach(control, 1, row, 1, 1)
 
 
-def automatic_number_control(
-    *, minimum: float, maximum: float, value: float, unit: str | None = None
-) -> tuple[Gtk.Box, Gtk.CheckButton, Gtk.SpinButton]:
-    """Create an automatic toggle paired with a numeric stepper."""
+class OptionalNumberControl:
+    """Numeric GTK control whose active value can be automatic (``None``)."""
 
-    spin = Gtk.SpinButton.new_with_range(minimum, maximum, 1)
-    spin.set_value(value)
-    spin.set_numeric(True)
-    spin.set_sensitive(False)
-    automatic = Gtk.CheckButton(label="Automatic", active=True)
-    automatic.connect(
-        "toggled", lambda button: spin.set_sensitive(not button.get_active())
-    )
+    def __init__(
+        self,
+        *,
+        minimum: float,
+        maximum: float,
+        value: float,
+        unit: str | None = None,
+    ) -> None:
+        self.spin = Gtk.SpinButton.new_with_range(minimum, maximum, 1)
+        self.spin.set_value(value)
+        self.spin.set_numeric(True)
+        self.spin.set_sensitive(False)
+        self.automatic = Gtk.CheckButton(label="Automatic", active=True)
+        self.automatic.connect(
+            "toggled",
+            lambda button: self.spin.set_sensitive(not button.get_active()),
+        )
 
-    box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-    box.append(automatic)
-    box.append(spin)
-    if unit is not None:
-        unit_label = Gtk.Label(label=unit)
-        unit_label.add_css_class("dim-label")
-        box.append(unit_label)
-    return box, automatic, spin
+        self.widget = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.widget.append(self.automatic)
+        self.widget.append(self.spin)
+        if unit is not None:
+            unit_label = Gtk.Label(label=unit)
+            unit_label.add_css_class("dim-label")
+            self.widget.append(unit_label)
+
+    @property
+    def value(self) -> int | None:
+        """Return the explicit integer, or ``None`` for automatic selection."""
+
+        if self.automatic.get_active():
+            return None
+        return self.spin.get_value_as_int()
+
+    def set_explicit(self, value: int) -> None:
+        """Select and expose an explicit value."""
+
+        self.automatic.set_active(False)
+        self.spin.set_value(value)
 
 
 def result_row(
@@ -534,8 +554,8 @@ def confirm_destructive_action(
     """Show a GNOME alert before a destructive operation."""
 
     dialog = Gtk.AlertDialog()
-    dialog.set_heading(heading)
-    dialog.set_body(body)
+    dialog.set_message(heading)
+    dialog.set_detail(body)
     dialog.set_buttons(["Cancel", action_label])
     dialog.set_cancel_button(0)
     dialog.set_default_button(0)

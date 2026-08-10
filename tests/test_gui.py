@@ -32,7 +32,10 @@ from cleanup_cli.views.gui import (
     WebPConversionGtkTab,
     create_gui_view,
 )
-from cleanup_cli.views.gui.application import GnomeThemeSynchronizer
+from cleanup_cli.views.gui.application import (
+    GnomeThemeSynchronizer,
+    confirm_destructive_action,
+)
 
 
 RequestT = TypeVar("RequestT")
@@ -66,6 +69,34 @@ class StaticTab:
     def build(self) -> Gtk.Widget:
         self.build_count += 1
         return Gtk.Label(label=self.title)
+
+
+class RecordingAlertDialog:
+    def __init__(self) -> None:
+        self.message = ""
+        self.detail = ""
+        self.buttons: list[str] = []
+        self.cancel_button = -1
+        self.default_button = -1
+        self.parent: Gtk.Window | None = None
+
+    def set_message(self, message: str) -> None:
+        self.message = message
+
+    def set_detail(self, detail: str) -> None:
+        self.detail = detail
+
+    def set_buttons(self, buttons: list[str]) -> None:
+        self.buttons = buttons
+
+    def set_cancel_button(self, button: int) -> None:
+        self.cancel_button = button
+
+    def set_default_button(self, button: int) -> None:
+        self.default_button = button
+
+    def choose(self, parent: Gtk.Window | None, *_args: object) -> None:
+        self.parent = parent
 
 
 def test_deduplication_gui_request_validation_and_options() -> None:
@@ -112,6 +143,29 @@ def test_webp_gui_request_validation_and_options() -> None:
         WebPConversionGtkTab.create_request("")
     with pytest.raises(ValueError, match="quality must be between"):
         WebPConversionGtkTab.create_request("/photos", quality=101)
+
+
+def test_destructive_confirmation_uses_gtk_alert_dialog_properties(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    alert = RecordingAlertDialog()
+    monkeypatch.setattr(Gtk, "AlertDialog", lambda: alert)
+    parent_widget = type("ParentWidget", (), {"get_root": lambda self: None})()
+
+    confirm_destructive_action(
+        parent_widget,  # type: ignore[arg-type]
+        heading="Delete duplicate images?",
+        body="This action cannot be undone.",
+        action_label="Delete",
+        callback=lambda: None,
+    )
+
+    assert alert.message == "Delete duplicate images?"
+    assert alert.detail == "This action cannot be undone."
+    assert alert.buttons == ["Cancel", "Delete"]
+    assert alert.cancel_button == 0
+    assert alert.default_button == 0
+    assert alert.parent is None
 
 
 @requires_display
@@ -230,17 +284,13 @@ def test_deduplication_tab_builds_form_request_and_renders_results() -> None:
     tab.build()
     assert tab._directory is not None
     assert tab._threshold is not None
-    assert tab._automatic_workers is not None
     assert tab._workers is not None
-    assert tab._automatic_memory is not None
     assert tab._memory is not None
     assert tab._delete is not None
     tab._directory.set_text("/photos")
     tab._threshold.set_value(4)
-    tab._automatic_workers.set_active(False)
-    tab._workers.set_value(3)
-    tab._automatic_memory.set_active(False)
-    tab._memory.set_value(256)
+    tab._workers.set_explicit(3)
+    tab._memory.set_explicit(256)
 
     request = tab._request_from_form()
     tab._render_result(controller.result)
@@ -279,17 +329,13 @@ def test_webp_tab_builds_form_request_and_renders_results() -> None:
     tab.build()
     assert tab._directory is not None
     assert tab._quality is not None
-    assert tab._automatic_workers is not None
     assert tab._workers is not None
-    assert tab._automatic_memory is not None
     assert tab._memory is not None
     assert tab._replace is not None
     tab._directory.set_text("/photos")
     tab._quality.set_value(90)
-    tab._automatic_workers.set_active(False)
-    tab._workers.set_value(3)
-    tab._automatic_memory.set_active(False)
-    tab._memory.set_value(256)
+    tab._workers.set_explicit(3)
+    tab._memory.set_explicit(256)
     tab._replace.set_active(True)
 
     request = tab._request_from_form()

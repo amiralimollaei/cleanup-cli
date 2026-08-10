@@ -27,8 +27,8 @@ from ...models import (
 )
 from .application import (
     ControllerGtkTab,
+    OptionalNumberControl,
     add_form_row,
-    automatic_number_control,
     choose_folder,
     confirm_destructive_action,
     form_grid,
@@ -51,10 +51,8 @@ class DeduplicationGtkTab(
         super().__init__(controller)
         self._directory: Gtk.Entry | None = None
         self._threshold: Gtk.SpinButton | None = None
-        self._automatic_workers: Gtk.CheckButton | None = None
-        self._workers: Gtk.SpinButton | None = None
-        self._automatic_memory: Gtk.CheckButton | None = None
-        self._memory: Gtk.SpinButton | None = None
+        self._workers: OptionalNumberControl | None = None
+        self._memory: OptionalNumberControl | None = None
         self._delete: Gtk.Switch | None = None
         self._streamed_count = 0
         self._streamed_saved_bytes = 0
@@ -109,18 +107,16 @@ class DeduplicationGtkTab(
         self._threshold = threshold
         add_form_row(grid, 1, "Similarity threshold", threshold)
 
-        workers_box, self._automatic_workers, self._workers = (
-            automatic_number_control(minimum=1, maximum=1024, value=4)
-        )
-        add_form_row(grid, 2, "Workers", workers_box)
+        self._workers = OptionalNumberControl(minimum=1, maximum=1024, value=4)
+        add_form_row(grid, 2, "Workers", self._workers.widget)
 
-        memory_box, self._automatic_memory, self._memory = automatic_number_control(
+        self._memory = OptionalNumberControl(
             minimum=1,
             maximum=1048576,
             value=512,
             unit="MiB",
         )
-        add_form_row(grid, 3, "Memory limit", memory_box)
+        add_form_row(grid, 3, "Memory limit", self._memory.widget)
 
         self._delete = Gtk.Switch(halign=Gtk.Align.START, valign=Gtk.Align.CENTER)
         add_form_row(grid, 4, "Delete duplicates", self._delete)
@@ -204,9 +200,7 @@ class DeduplicationGtkTab(
             for widget in (
                 self._directory,
                 self._threshold,
-                self._automatic_workers,
                 self._workers,
-                self._automatic_memory,
                 self._memory,
                 self._delete,
             )
@@ -214,27 +208,15 @@ class DeduplicationGtkTab(
             raise RuntimeError("tab has not been built")
         assert self._directory is not None
         assert self._threshold is not None
-        assert self._automatic_workers is not None
         assert self._workers is not None
-        assert self._automatic_memory is not None
         assert self._memory is not None
         assert self._delete is not None
-        workers = (
-            None
-            if self._automatic_workers.get_active()
-            else self._workers.get_value_as_int()
-        )
-        memory = (
-            None
-            if self._automatic_memory.get_active()
-            else self._memory.get_value_as_int()
-        )
         return self.create_request(
             self._directory.get_text(),
             threshold=self._threshold.get_value_as_int(),
             delete=self._delete.get_active(),
-            max_workers=workers,
-            memory_limit_mb=memory,
+            max_workers=self._workers.value,
+            memory_limit_mb=self._memory.value,
         )
 
     def _render_result(self, result: DeduplicationResult) -> None:
@@ -309,10 +291,8 @@ class WebPConversionGtkTab(
         super().__init__(controller)
         self._directory: Gtk.Entry | None = None
         self._quality: Gtk.SpinButton | None = None
-        self._automatic_workers: Gtk.CheckButton | None = None
-        self._workers: Gtk.SpinButton | None = None
-        self._automatic_memory: Gtk.CheckButton | None = None
-        self._memory: Gtk.SpinButton | None = None
+        self._workers: OptionalNumberControl | None = None
+        self._memory: OptionalNumberControl | None = None
         self._replace: Gtk.Switch | None = None
         self._streamed_conversions = 0
         self._streamed_skips = 0
@@ -367,18 +347,16 @@ class WebPConversionGtkTab(
         self._quality = quality
         add_form_row(grid, 1, "Quality", quality)
 
-        workers_box, self._automatic_workers, self._workers = (
-            automatic_number_control(minimum=1, maximum=1024, value=4)
-        )
-        add_form_row(grid, 2, "Workers", workers_box)
+        self._workers = OptionalNumberControl(minimum=1, maximum=1024, value=4)
+        add_form_row(grid, 2, "Workers", self._workers.widget)
 
-        memory_box, self._automatic_memory, self._memory = automatic_number_control(
+        self._memory = OptionalNumberControl(
             minimum=1,
             maximum=1048576,
             value=512,
             unit="MiB",
         )
-        add_form_row(grid, 3, "Memory limit", memory_box)
+        add_form_row(grid, 3, "Memory limit", self._memory.widget)
 
         self._replace = Gtk.Switch(halign=Gtk.Align.START, valign=Gtk.Align.CENTER)
         add_form_row(grid, 4, "Replace originals", self._replace)
@@ -463,9 +441,7 @@ class WebPConversionGtkTab(
             for widget in (
                 self._directory,
                 self._quality,
-                self._automatic_workers,
                 self._workers,
-                self._automatic_memory,
                 self._memory,
                 self._replace,
             )
@@ -473,27 +449,15 @@ class WebPConversionGtkTab(
             raise RuntimeError("tab has not been built")
         assert self._directory is not None
         assert self._quality is not None
-        assert self._automatic_workers is not None
         assert self._workers is not None
-        assert self._automatic_memory is not None
         assert self._memory is not None
         assert self._replace is not None
-        workers = (
-            None
-            if self._automatic_workers.get_active()
-            else self._workers.get_value_as_int()
-        )
-        memory = (
-            None
-            if self._automatic_memory.get_active()
-            else self._memory.get_value_as_int()
-        )
         return self.create_request(
             self._directory.get_text(),
             quality=self._quality.get_value_as_int(),
             replace=self._replace.get_active(),
-            max_workers=workers,
-            memory_limit_mb=memory,
+            max_workers=self._workers.value,
+            memory_limit_mb=self._memory.value,
         )
 
     def _render_result(self, result: WebPDirectoryConversionResult) -> None:

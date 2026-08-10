@@ -6,23 +6,7 @@ import argparse
 from collections.abc import Sequence
 from typing import Protocol, TextIO
 
-from ..controllers import (
-    DeduplicationController,
-    WebPConversionController,
-)
-from ..models.abstractions import ImageDirectoryScanner, RecursiveDirectoryIndexer
-from ..models.image_duplicates import (
-    DirectoryDeduplicator,
-    ImageSignature,
-    ImageSignatureDistance,
-    PillowImageSignatureAnalyzer,
-    QualityAwareDuplicateDetector,
-    image_quality_key,
-)
-from ..models.image_webp import (
-    PillowWebPCodec,
-    WebPDirectoryConverter,
-)
+from ..composition import create_cleanup_controllers
 from .commands import DeduplicateCommand, WebPCommand
 
 
@@ -83,22 +67,9 @@ class ArgparseCliView:
 def create_cli_view(*, output: TextIO | None = None) -> ArgparseCliView:
     """Compose the production models, controllers, and CLI view."""
 
-    analyzer = PillowImageSignatureAnalyzer()
-    indexer = RecursiveDirectoryIndexer(
-        analyzer,
-        scanner=ImageDirectoryScanner(),
-        memory_estimator=analyzer,
-    )
-    deduplicator = DirectoryDeduplicator(
-        indexer,
-        QualityAwareDuplicateDetector[ImageSignature](
-            ImageSignatureDistance(), image_quality_key
-        ),
-    )
-    deduplication_controller = DeduplicationController(deduplicator)
-    webp_controller = WebPConversionController(WebPDirectoryConverter(PillowWebPCodec()))
+    controllers = create_cleanup_controllers()
     return ArgparseCliView(
-        DeduplicateCommand(deduplication_controller, output=output),
-        WebPCommand(webp_controller, output=output),
+        DeduplicateCommand(controllers.deduplication, output=output),
+        WebPCommand(controllers.webp, output=output),
         output=output,
     )
