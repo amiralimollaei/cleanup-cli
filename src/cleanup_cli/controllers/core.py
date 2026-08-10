@@ -86,4 +86,5 @@ class WebPConversionController(
             quality=request.options.quality,
             replace=request.options.replace,
             max_workers=request.options.max_workers,
+            memory_limit_mb=request.options.memory_limit_mb,
         )

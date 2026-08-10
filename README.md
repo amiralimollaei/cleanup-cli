@@ -40,6 +40,20 @@ The default WebP quality is 80. It can be changed from 0 through 100:
 cleanup-cli webp /path/to/photos --quality 90
 ```
 
+Before decoding, the converter reads each image header and estimates its peak
+decoded and encoder memory from its pixel dimensions. Concurrent conversions
+are admitted only while their combined estimates fit a memory budget. By
+default, the budget is derived conservatively from currently available memory;
+it can be set explicitly for a constrained machine or container:
+
+```console
+cleanup-cli webp /path/to/photos --replace --memory-limit-mb 512
+```
+
+An image whose individual estimate exceeds the budget is skipped without
+decoding it. `--max-workers` remains an upper bound on concurrency, while the
+memory budget may select fewer workers for large images.
+
 ## Removing duplicate images
 
 `cleanup-cli` recursively scans a directory, decodes images with PyAV, and

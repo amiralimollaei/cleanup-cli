@@ -52,6 +52,16 @@ class WebPCommand:
             metavar="N",
             help="maximum number of worker threads (default: executor default)",
         )
+        parser.add_argument(
+            "--memory-limit-mb",
+            type=positive_int,
+            default=None,
+            metavar="MiB",
+            help=(
+                "maximum estimated memory for concurrent conversions "
+                "(default: auto)"
+            ),
+        )
         parser.set_defaults(command_handler=self, command_parser=parser)
 
     def execute(
@@ -67,6 +77,7 @@ class WebPCommand:
                         quality=args.quality,
                         replace=args.replace,
                         max_workers=args.max_workers,
+                        memory_limit_mb=args.memory_limit_mb,
                     ),
                 )
             )

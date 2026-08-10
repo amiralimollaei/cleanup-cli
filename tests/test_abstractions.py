@@ -11,6 +11,7 @@ from cleanup_cli import (
     DirectoryDeduplicator,
     DirectoryIndexer,
     ImageDirectoryScanner,
+    ImageInspection,
     IndexedFile,
     RecursiveDirectoryIndexer,
     QualityAwareDuplicateDetector,
@@ -66,6 +67,9 @@ class FakeWebPCodec(WebPCodec[str]):
     def __init__(self, encoded_size: int = 4) -> None:
         self.encoded_size = encoded_size
         self.qualities: list[int] = []
+
+    def inspect(self, path: Path) -> ImageInspection:
+        return ImageInspection((10, 20), False, False, 1)
 
     def decode(self, path: Path) -> DecodedImage[str]:
         return DecodedImage(

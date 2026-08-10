@@ -35,6 +35,7 @@ from .image_duplicates import (
 )
 from .image_webp import (
     DecodedImage,
+    ImageInspection,
     PillowWebPCodec,
     WebPCodec,
     WebPConversion,
@@ -58,6 +59,7 @@ __all__ = [
     "FileAnalyzer",
     "FileRemover",
     "ImageDirectoryScanner",
+    "ImageInspection",
     "ImageSignature",
     "ImageSignatureDistance",
     "IndexedFile",

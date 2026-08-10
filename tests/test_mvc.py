@@ -107,13 +107,29 @@ def test_cli_view_builds_webp_request_and_renders_result() -> None:
     view = ArgparseCliView(duplicate_controller, webp_controller, output=output)
 
     exit_code = view.run(
-        ["webp", "/photos", "--quality", "90", "--replace", "--max-workers", "3"]
+        [
+            "webp",
+            "/photos",
+            "--quality",
+            "90",
+            "--replace",
+            "--max-workers",
+            "3",
+            "--memory-limit-mb",
+            "256",
+        ]
     )
 
     assert exit_code == 0
     assert webp_controller.requests == [
         WebPConversionRequest(
-            Path("/photos"), WebPOptions(quality=90, replace=True, max_workers=3)
+            Path("/photos"),
+            WebPOptions(
+                quality=90,
+                replace=True,
+                max_workers=3,
+                memory_limit_mb=256,
+            ),
         )
     ]
     assert output.getvalue().splitlines() == [
@@ -130,6 +146,15 @@ def test_cli_view_rejects_non_positive_webp_worker_count() -> None:
 
     with pytest.raises(SystemExit):
         view.run(["webp", "/photos", "--max-workers", "0"])
+
+
+def test_cli_view_rejects_non_positive_webp_memory_limit() -> None:
+    duplicate_controller = RecordingController(DeduplicationResult((), False))
+    webp_controller = RecordingController(WebPDirectoryConversionResult((), ()))
+    view = ArgparseCliView(duplicate_controller, webp_controller, output=StringIO())
+
+    with pytest.raises(SystemExit):
+        view.run(["webp", "/photos", "--memory-limit-mb", "0"])
 
 
 def test_cli_view_preserves_legacy_directory_command() -> None:
