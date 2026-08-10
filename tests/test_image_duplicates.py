@@ -217,6 +217,58 @@ def test_zero_threshold_avoids_comparing_unique_hashes() -> None:
     assert metric.calls == 0
 
 
+def test_banded_index_promotes_only_colliding_buckets_to_lists() -> None:
+    index = image_duplicates.BandedPHashIndex(threshold=0)
+    for rank in range(1_000):
+        index.add(rank, rank)
+
+    assert all(
+        isinstance(bucket, int) for bucket in index._tables[0].values()
+    )
+
+    index.add(500, 1_000)
+
+    assert list(index.candidates(500)) == [500, 1_000]
+    assert isinstance(index._tables[0][500], list)
+
+
+def test_low_threshold_limits_comparisons_for_mostly_unique_hashes() -> None:
+    class CountingDistance(image_duplicates.ImageSignatureDistance):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def distance(
+            self,
+            left: int | image_duplicates.ImageSignature,
+            right: int | image_duplicates.ImageSignature,
+        ) -> int:
+            self.calls += 1
+            return super().distance(left, right)
+
+    rng = np.random.default_rng(54321)
+    values = rng.integers(0, 2**64, size=5_000, dtype=np.uint64)
+    images: list[IndexedFile[int | image_duplicates.ImageSignature]] = [
+        IndexedFile(Path(f"{rank}.png"), int(value))
+        for rank, value in enumerate(values)
+    ]
+    metric = CountingDistance()
+    detector = image_duplicates.QualityAwareDuplicateDetector(
+        metric, index_factory=image_duplicates.BandedPHashIndex
+    )
+
+    assert detector.find(images, threshold=4) == []
+    assert metric.calls < 50_000
+
+
+def test_maximum_threshold_uses_exhaustive_candidate_range() -> None:
+    index = image_duplicates.BandedPHashIndex(threshold=64)
+    for rank in range(10):
+        index.add(rank, rank)
+
+    assert list(index.candidates(123)) == list(range(10))
+    assert index._tables == []
+
+
 def test_quality_selection_prefers_resolution_then_size_then_last_path(
     tmp_path: Path,
 ) -> None:

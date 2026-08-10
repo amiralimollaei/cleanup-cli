@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Iterator
+from collections import deque
+from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 import os
@@ -22,7 +23,7 @@ AnalyzedValueT = TypeVar("AnalyzedValueT", covariant=True)
 MeasuredValueT = TypeVar("MeasuredValueT", contravariant=True)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class FileIdentity:
     """Metadata identifying the directory entry that was analyzed."""
 
@@ -169,7 +170,7 @@ class ImageExtensionFilter:
         return path.suffix.lower() in IMAGE_EXTENSIONS
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class IndexedFile(Generic[ValueT]):
     """A file paired with its analyzed domain value."""
 
@@ -271,7 +272,13 @@ class RecursiveDirectoryIndexer(DirectoryIndexer[ValueT]):
         indexed: list[IndexedFile[ValueT]] = []
         paths = list(self._scanner.scan(directory))
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            results = executor.map(self._index_file_safely, paths)
+            worker_count = max_workers or min(32, (os.cpu_count() or 1) + 4)
+            results = _ordered_bounded_map(
+                executor,
+                self._index_file_safely,
+                paths,
+                max_pending=worker_count * 2,
+            )
             for result in tqdm.tqdm(
                 results, total=len(paths), desc=f"indexing {directory}", unit="file"
             ):
@@ -289,3 +296,32 @@ class RecursiveDirectoryIndexer(DirectoryIndexer[ValueT]):
             return IndexedFile(path, value, identity)
         except self._ignored_errors:
             return None
+
+
+def _ordered_bounded_map(
+    executor: ThreadPoolExecutor,
+    function: Callable[[Path], ValueT],
+    values: Iterable[Path],
+    *,
+    max_pending: int,
+) -> Iterator[ValueT]:
+    """Map in input order without eagerly submitting the entire iterable."""
+
+    iterator = iter(values)
+    pending = deque()
+    for _ in range(max_pending):
+        try:
+            value = next(iterator)
+        except StopIteration:
+            break
+        pending.append(executor.submit(function, value))
+
+    while pending:
+        result = pending.popleft().result()
+        try:
+            value = next(iterator)
+        except StopIteration:
+            pass
+        else:
+            pending.append(executor.submit(function, value))
+        yield result

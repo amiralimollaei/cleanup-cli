@@ -38,7 +38,7 @@ PHASH_BITS = PHASH_LOW_FREQUENCIES**2
 SignatureT = TypeVar("SignatureT")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Duplicate:
     """A duplicate path and the higher-quality path retained in its place."""
 
@@ -48,7 +48,7 @@ class Duplicate:
     removed_identity: FileIdentity | None = field(default=None, compare=False)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class DeduplicationOptions:
     """Policy for matching and optionally removing duplicate files."""
 
@@ -62,7 +62,7 @@ class DeduplicationOptions:
             raise ValueError("max_workers must be greater than 0")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ImageSignature:
     """Structural and color fingerprints plus the source pixel dimensions."""
 
@@ -71,7 +71,7 @@ class ImageSignature:
     resolution: tuple[int, int] = (0, 0)
 
 
-@dataclass(frozen=True, order=True)
+@dataclass(frozen=True, order=True, slots=True)
 class ImageQuality:
     """Ranking criteria (resolution, then file size) for quality comparisons."""
 
@@ -79,7 +79,7 @@ class ImageQuality:
     size: int
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class NormalizedImage:
     """Normalized pixels and source metadata produced by one image decode."""
 
@@ -279,30 +279,98 @@ class BandedPHashIndex:
     Two 64-bit hashes within *threshold* bits must share at least one of
     ``threshold + 1`` bands. At threshold zero, the whole hash is one band and
     this becomes direct hash grouping. The index is conservative and therefore
-    produces the same retained set as an exhaustive scan.
+    produces the same retained set as an exhaustive scan. A threshold covering
+    all 64 bits uses an exhaustive range directly because no pruning is
+    possible.
     """
 
     def __init__(self, threshold: int = 0) -> None:
+        self._exhaustive = (
+            ExhaustiveCandidateIndex(threshold)
+            if threshold == PHASH_BITS
+            else None
+        )
+        if self._exhaustive is not None:
+            self._bands: tuple[tuple[int, int], ...] = ()
+            self._tables: list[dict[int, int | list[int]]] = []
+            return
+
         bands = threshold + 1
-        self._edges = [
+        edges = [
             (PHASH_BITS * band) // bands for band in range(bands + 1)
         ]
-        self._tables: list[dict[int, list[int]]] = [{} for _ in range(bands)]
+        self._bands = tuple(
+            (low, (1 << (high - low)) - 1)
+            for low, high in zip(edges, edges[1:])
+        )
+        self._tables: list[dict[int, int | list[int]]] = [
+            {} for _ in range(bands)
+        ]
 
-    def _band_values(self, value: int | ImageSignature) -> Iterable[int]:
-        phash = value.phash if isinstance(value, ImageSignature) else value
-        for low, high in zip(self._edges, self._edges[1:]):
-            yield (phash >> low) & ((1 << (high - low)) - 1)
+    @staticmethod
+    def _phash(value: int | ImageSignature) -> int:
+        return value.phash if isinstance(value, ImageSignature) else value
 
     def candidates(self, value: int | ImageSignature) -> Iterable[int]:
-        ranks: set[int] = set()
-        for table, band in zip(self._tables, self._band_values(value)):
-            ranks.update(table.get(band, ()))
+        if self._exhaustive is not None:
+            return self._exhaustive.candidates(value)
+
+        phash = self._phash(value)
+        if len(self._tables) == 1:
+            bucket = self._tables[0].get(phash)
+            if bucket is None:
+                return ()
+            if isinstance(bucket, int):
+                return (bucket,)
+            return bucket
+
+        first: int | list[int] | None = None
+        ranks: set[int] | None = None
+        for table, (shift, mask) in zip(self._tables, self._bands):
+            band = (phash >> shift) & mask
+            bucket = table.get(band)
+            if bucket is None:
+                continue
+            if first is None:
+                first = bucket
+                continue
+            if ranks is None:
+                ranks = {first} if isinstance(first, int) else set(first)
+            if isinstance(bucket, int):
+                ranks.add(bucket)
+            else:
+                ranks.update(bucket)
+
+        if first is None:
+            return ()
+        if ranks is None:
+            return (first,) if isinstance(first, int) else first
         return sorted(ranks)
 
     def add(self, value: int | ImageSignature, rank: int) -> None:
-        for table, band in zip(self._tables, self._band_values(value)):
-            table.setdefault(band, []).append(rank)
+        if self._exhaustive is not None:
+            self._exhaustive.add(value, rank)
+            return
+
+        phash = self._phash(value)
+        if len(self._tables) == 1:
+            self._add_rank(self._tables[0], phash, rank)
+            return
+
+        for table, (shift, mask) in zip(self._tables, self._bands):
+            self._add_rank(table, (phash >> shift) & mask, rank)
+
+    @staticmethod
+    def _add_rank(
+        table: dict[int, int | list[int]], band: int, rank: int
+    ) -> None:
+        bucket = table.get(band)
+        if bucket is None:
+            table[band] = rank
+        elif isinstance(bucket, int):
+            table[band] = [bucket, rank]
+        else:
+            bucket.append(rank)
 
 
 class QualityAwareDuplicateDetector(DuplicateDetector[SignatureT]):
@@ -351,9 +419,16 @@ class QualityAwareDuplicateDetector(DuplicateDetector[SignatureT]):
                     Duplicate(image.path, match[0], match[1], image.identity)
                 )
 
+        if not duplicates:
+            return duplicates
+
+        removed_paths = {duplicate.removed for duplicate in duplicates}
         positions: dict[Path, int] = {}
         for position, image in enumerate(images):
-            positions.setdefault(image.path, position)
+            if image.path in removed_paths:
+                positions.setdefault(image.path, position)
+                if len(positions) == len(removed_paths):
+                    break
         duplicates.sort(key=lambda duplicate: positions[duplicate.removed])
         return duplicates
 

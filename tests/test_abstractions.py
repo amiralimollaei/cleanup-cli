@@ -1,6 +1,7 @@
 from pathlib import Path
 from threading import Lock
 from time import sleep
+from typing import Any, Callable
 
 import pytest
 
@@ -20,6 +21,7 @@ from cleanup_cli import (
 from cleanup_cli.models.image_duplicates import Duplicate
 from cleanup_cli.models.abstractions import file_identity
 from cleanup_cli.models.image_duplicates import FileChangedError, LocalFileRemover
+from cleanup_cli.models import abstractions
 
 
 class TextLengthAnalyzer:
@@ -136,6 +138,56 @@ def test_recursive_indexer_analyzes_files_in_parallel_and_preserves_order(
 
     assert maximum_active > 1
     assert [item.path for item in indexed] == paths
+
+
+def test_recursive_indexer_bounds_submitted_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = [tmp_path / f"{index}.txt" for index in range(100)]
+    for path in paths:
+        path.write_text("value")
+
+    class DeferredFuture:
+        def __init__(self, function: Callable[[Path], Any], path: Path) -> None:
+            self.function = function
+            self.path = path
+
+        def result(self) -> Any:
+            executor.outstanding -= 1
+            return self.function(self.path)
+
+    class RecordingExecutor:
+        def __init__(self) -> None:
+            self.outstanding = 0
+            self.maximum_outstanding = 0
+
+        def __enter__(self) -> Any:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+        def submit(
+            self, function: Callable[[Path], Any], path: Path
+        ) -> DeferredFuture:
+            self.outstanding += 1
+            self.maximum_outstanding = max(
+                self.maximum_outstanding, self.outstanding
+            )
+            return DeferredFuture(function, path)
+
+    executor = RecordingExecutor()
+    monkeypatch.setattr(
+        abstractions, "ThreadPoolExecutor", lambda max_workers: executor
+    )
+    indexer = RecursiveDirectoryIndexer(
+        TextLengthAnalyzer(), scanner=StaticScanner(paths), ignored_errors=()
+    )
+
+    indexed = indexer.index(tmp_path, max_workers=3)
+
+    assert [item.path for item in indexed] == paths
+    assert executor.maximum_outstanding == 6
 
 
 def test_duplicate_detector_uses_injected_generic_distance_metric() -> None:
