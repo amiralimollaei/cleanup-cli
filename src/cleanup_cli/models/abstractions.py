@@ -256,6 +256,7 @@ class RecursiveDirectoryIndexer(DirectoryIndexer[ValueT]):
             ValueError,
             IndexError,
             Image.DecompressionBombWarning,
+            Image.DecompressionBombError,
         ),
     ) -> None:
         self._analyzer = analyzer

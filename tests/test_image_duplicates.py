@@ -152,6 +152,71 @@ def test_keeps_last_sorted_image_without_transitive_matching() -> None:
     ]
 
 
+@pytest.mark.parametrize("threshold", [0, 1, 4, 16, 63, 64])
+def test_banded_index_matches_exhaustive_detection(threshold: int) -> None:
+    rng = np.random.default_rng(12345)
+    values = [int(value) for value in rng.integers(0, 2**64, size=200, dtype=np.uint64)]
+    # Include exact and near duplicates alongside mostly unique hashes.
+    values.extend((values[10], values[20] ^ 0b1111, values[30] ^ ((1 << 63) - 1)))
+    images: list[IndexedFile[int | image_duplicates.ImageSignature]] = [
+        IndexedFile(Path(f"{position}.png"), value)
+        for position, value in enumerate(values)
+    ]
+    metric = image_duplicates.ImageSignatureDistance()
+
+    exhaustive = image_duplicates.QualityAwareDuplicateDetector(metric)
+    banded = image_duplicates.QualityAwareDuplicateDetector(
+        metric, index_factory=image_duplicates.BandedPHashIndex
+    )
+
+    assert banded.find(images, threshold) == exhaustive.find(images, threshold)
+
+
+def test_banded_index_preserves_full_signature_color_matching() -> None:
+    signatures = [
+        image_duplicates.ImageSignature(0, (0, 0, 0)),
+        image_duplicates.ImageSignature(0, (1, 1, 1)),
+        image_duplicates.ImageSignature(1, (200, 200, 200)),
+        image_duplicates.ImageSignature(3, (201, 201, 201)),
+    ]
+    images: list[IndexedFile[int | image_duplicates.ImageSignature]] = [
+        IndexedFile(Path(f"{position}.png"), signature)
+        for position, signature in enumerate(signatures)
+    ]
+    metric = image_duplicates.ImageSignatureDistance()
+    exhaustive = image_duplicates.QualityAwareDuplicateDetector(metric)
+    banded = image_duplicates.QualityAwareDuplicateDetector(
+        metric, index_factory=image_duplicates.BandedPHashIndex
+    )
+
+    assert banded.find(images, 2) == exhaustive.find(images, 2)
+
+
+def test_zero_threshold_avoids_comparing_unique_hashes() -> None:
+    class CountingDistance(image_duplicates.ImageSignatureDistance):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def distance(
+            self,
+            left: int | image_duplicates.ImageSignature,
+            right: int | image_duplicates.ImageSignature,
+        ) -> int:
+            self.calls += 1
+            return super().distance(left, right)
+
+    metric = CountingDistance()
+    detector = image_duplicates.QualityAwareDuplicateDetector(
+        metric, index_factory=image_duplicates.BandedPHashIndex
+    )
+    images: list[IndexedFile[int | image_duplicates.ImageSignature]] = [
+        IndexedFile(Path(f"{value}.png"), value) for value in range(1_000)
+    ]
+
+    assert detector.find(images, 0) == []
+    assert metric.calls == 0
+
+
 def test_quality_selection_prefers_resolution_then_size_then_last_path(
     tmp_path: Path,
 ) -> None:
@@ -182,6 +247,23 @@ def test_quality_selection_prefers_resolution_then_size_then_last_path(
     assert find_duplicates(
         [(equal_first, equal_resolution), (equal_last, equal_resolution)]
     ) == [Duplicate(equal_first, equal_last, 0)]
+
+
+def test_equal_resolution_png_is_kept_over_smaller_webp(tmp_path: Path) -> None:
+    png_path = tmp_path / "original.png"
+    webp_path = tmp_path / "converted.webp"
+    pixels = np.stack((_pattern(64), np.rot90(_pattern(64)), _pattern(64)), axis=-1)
+    image = Image.fromarray(pixels)
+    image.save(png_path, compress_level=0)
+    image.save(webp_path, lossless=True)
+
+    assert png_path.stat().st_size > webp_path.stat().st_size
+
+    duplicates = deduplicate_directory(tmp_path)
+
+    assert [(duplicate.removed, duplicate.kept) for duplicate in duplicates] == [
+        (webp_path, png_path)
+    ]
 
 
 def test_indexes_recursively_in_natural_order_and_skips_non_images(

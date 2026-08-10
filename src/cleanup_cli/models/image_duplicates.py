@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -25,6 +25,7 @@ from .abstractions import (
     FileIdentity,
     ImageDirectoryScanner,
     IndexedFile,
+    MeasuredValueT,
     RecursiveDirectoryIndexer,
     file_identity,
     quarantine_if_unchanged,
@@ -247,6 +248,63 @@ class DuplicateDetector(ABC, Generic[SignatureT]):
         """Return files considered duplicates under *threshold*."""
 
 
+class CandidateIndex(Protocol[MeasuredValueT]):
+    """Narrow the retained values a new candidate must be compared against."""
+
+    def candidates(self, value: MeasuredValueT) -> Iterable[int]:
+        """Return retained-list indexes to test in ascending order."""
+        ...
+
+    def add(self, value: MeasuredValueT, rank: int) -> None:
+        """Record that *value* was retained at *rank*."""
+        ...
+
+
+class ExhaustiveCandidateIndex:
+    """Compare a candidate against every retained value."""
+
+    def __init__(self, threshold: int = 0) -> None:
+        self._retained = 0
+
+    def candidates(self, value: object) -> Iterable[int]:
+        return range(self._retained)
+
+    def add(self, value: object, rank: int) -> None:
+        self._retained += 1
+
+
+class BandedPHashIndex:
+    """Prune comparisons by splitting a pHash into exact-match bands.
+
+    Two 64-bit hashes within *threshold* bits must share at least one of
+    ``threshold + 1`` bands. At threshold zero, the whole hash is one band and
+    this becomes direct hash grouping. The index is conservative and therefore
+    produces the same retained set as an exhaustive scan.
+    """
+
+    def __init__(self, threshold: int = 0) -> None:
+        bands = threshold + 1
+        self._edges = [
+            (PHASH_BITS * band) // bands for band in range(bands + 1)
+        ]
+        self._tables: list[dict[int, list[int]]] = [{} for _ in range(bands)]
+
+    def _band_values(self, value: int | ImageSignature) -> Iterable[int]:
+        phash = value.phash if isinstance(value, ImageSignature) else value
+        for low, high in zip(self._edges, self._edges[1:]):
+            yield (phash >> low) & ((1 << (high - low)) - 1)
+
+    def candidates(self, value: int | ImageSignature) -> Iterable[int]:
+        ranks: set[int] = set()
+        for table, band in zip(self._tables, self._band_values(value)):
+            ranks.update(table.get(band, ()))
+        return sorted(ranks)
+
+    def add(self, value: int | ImageSignature, rank: int) -> None:
+        for table, band in zip(self._tables, self._band_values(value)):
+            table.setdefault(band, []).append(rank)
+
+
 class QualityAwareDuplicateDetector(DuplicateDetector[SignatureT]):
     """Keep the best match while avoiding non-transitive deletion chains.
 
@@ -259,9 +317,11 @@ class QualityAwareDuplicateDetector(DuplicateDetector[SignatureT]):
         self,
         metric: DistanceMetric[SignatureT],
         quality_key: Callable[[IndexedFile[SignatureT]], ImageQuality] | None = None,
+        index_factory: Callable[[int], CandidateIndex[SignatureT]] | None = None,
     ) -> None:
         self._metric = metric
         self._quality_key = quality_key or (lambda _: ImageQuality(0, 0))
+        self._index_factory = index_factory or ExhaustiveCandidateIndex
 
     def find(
         self,
@@ -271,30 +331,30 @@ class QualityAwareDuplicateDetector(DuplicateDetector[SignatureT]):
         _validate_threshold(threshold)
 
         ranked_images = sorted(images, key=self._quality_key)
+        index = self._index_factory(threshold)
         kept: list[IndexedFile[SignatureT]] = []
         duplicates: list[Duplicate] = []
         for image in reversed(ranked_images):
             match: tuple[Path, int] | None = None
-            for retained in kept:
+            for rank in index.candidates(image.value):
+                retained = kept[rank]
                 distance = self._metric.distance(image.value, retained.value)
                 if distance <= threshold:
                     match = (retained.path, distance)
                     break
 
             if match is None:
+                index.add(image.value, len(kept))
                 kept.append(image)
             else:
                 duplicates.append(
                     Duplicate(image.path, match[0], match[1], image.identity)
                 )
 
-        duplicates.sort(
-            key=lambda duplicate: next(
-                position
-                for position, image in enumerate(images)
-                if image.path == duplicate.removed
-            )
-        )
+        positions: dict[Path, int] = {}
+        for position, image in enumerate(images):
+            positions.setdefault(image.path, position)
+        duplicates.sort(key=lambda duplicate: positions[duplicate.removed])
         return duplicates
 
 
@@ -408,7 +468,9 @@ def find_duplicates(
     """
 
     indexed = [IndexedFile(path, signature) for path, signature in images]
-    detector = QualityAwareDuplicateDetector(ImageSignatureDistance(), image_quality_key)
+    detector = QualityAwareDuplicateDetector(
+        ImageSignatureDistance(), image_quality_key, BandedPHashIndex
+    )
     return detector.find(indexed, threshold)
 
 
@@ -423,7 +485,9 @@ def deduplicate_directory(
 
     model = DirectoryDeduplicator(
         ImageIndexAdapter(),
-        QualityAwareDuplicateDetector(ImageSignatureDistance(), image_quality_key),
+        QualityAwareDuplicateDetector(
+            ImageSignatureDistance(), image_quality_key, BandedPHashIndex
+        ),
     )
     options = DeduplicationOptions(
         threshold=threshold, delete=delete, max_workers=max_workers
