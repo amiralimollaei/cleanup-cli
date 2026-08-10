@@ -26,7 +26,7 @@ scipy = [
 
 [package.metadata]
 requires-dist = [
-    { name = "numpy", specifier = ">=2.5.1" },
+    { name = "numpy", specifier = ">=2.0.0" },
     { name = "pillow", specifier = ">=11.0.0" },
     { name = "tqdm", specifier = ">=4.70.0" },
 ]
