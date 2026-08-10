@@ -1,3 +1,4 @@
+import argparse
 from io import StringIO
 from pathlib import Path
 from typing import Generic, TypeVar
@@ -24,6 +25,7 @@ from cleanup_cli.models import (
     WebPSkip,
 )
 from cleanup_cli.views import ArgparseCliView
+from cleanup_cli.views.commands import DeduplicateCommand, WebPCommand
 
 
 RequestT = TypeVar("RequestT")
@@ -48,6 +50,26 @@ class StaticIndexer(DirectoryIndexer[int]):
             IndexedFile(directory / "1.jpg", 1),
             IndexedFile(directory / "2.jpg", 1),
         ]
+
+
+class RecordingCommand:
+    """Minimal command used to verify view-level command registration."""
+
+    help = "record a value"
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.values: list[str] = []
+
+    def add_to(self, subparsers: argparse._SubParsersAction) -> None:
+        parser = subparsers.add_parser(self.name, help=self.help)
+        parser.add_argument("value")
+        parser.set_defaults(command_handler=self, command_parser=parser)
+
+    def execute(
+        self, args: argparse.Namespace, parser: argparse.ArgumentParser
+    ) -> None:
+        self.values.append(args.value)
 
 
 class IntegerDistance:
@@ -77,7 +99,11 @@ def test_cli_view_builds_deduplication_request_and_renders_result() -> None:
     )
     webp_controller = RecordingController(WebPDirectoryConversionResult((), ()))
     output = StringIO()
-    view = ArgparseCliView(duplicate_controller, webp_controller, output=output)
+    view = ArgparseCliView(
+        DeduplicateCommand(duplicate_controller, output=output),
+        WebPCommand(webp_controller, output=output),
+        output=output,
+    )
 
     exit_code = view.run(
         ["deduplicate", "/photos", "--threshold", "4", "--max-workers", "3"]
@@ -104,7 +130,11 @@ def test_cli_view_builds_webp_request_and_renders_result() -> None:
     skip = WebPSkip(Path("small.png"), "WebP would not be smaller")
     webp_controller = RecordingController(WebPDirectoryConversionResult((conversion,), (skip,)))
     output = StringIO()
-    view = ArgparseCliView(duplicate_controller, webp_controller, output=output)
+    view = ArgparseCliView(
+        DeduplicateCommand(duplicate_controller, output=output),
+        WebPCommand(webp_controller, output=output),
+        output=output,
+    )
 
     exit_code = view.run(
         [
@@ -142,7 +172,11 @@ def test_cli_view_builds_webp_request_and_renders_result() -> None:
 def test_cli_view_rejects_non_positive_webp_worker_count() -> None:
     duplicate_controller = RecordingController(DeduplicationResult((), False))
     webp_controller = RecordingController(WebPDirectoryConversionResult((), ()))
-    view = ArgparseCliView(duplicate_controller, webp_controller, output=StringIO())
+    view = ArgparseCliView(
+        DeduplicateCommand(duplicate_controller),
+        WebPCommand(webp_controller),
+        output=StringIO(),
+    )
 
     with pytest.raises(SystemExit):
         view.run(["webp", "/photos", "--max-workers", "0"])
@@ -151,18 +185,48 @@ def test_cli_view_rejects_non_positive_webp_worker_count() -> None:
 def test_cli_view_rejects_non_positive_webp_memory_limit() -> None:
     duplicate_controller = RecordingController(DeduplicationResult((), False))
     webp_controller = RecordingController(WebPDirectoryConversionResult((), ()))
-    view = ArgparseCliView(duplicate_controller, webp_controller, output=StringIO())
+    view = ArgparseCliView(
+        DeduplicateCommand(duplicate_controller),
+        WebPCommand(webp_controller),
+        output=StringIO(),
+    )
 
     with pytest.raises(SystemExit):
         view.run(["webp", "/photos", "--memory-limit-mb", "0"])
 
 
-def test_cli_view_preserves_legacy_directory_command() -> None:
+def test_cli_view_rejects_commandless_directory_input() -> None:
     duplicate_controller = RecordingController(DeduplicationResult((), False))
     webp_controller = RecordingController(WebPDirectoryConversionResult((), ()))
-    view = ArgparseCliView(duplicate_controller, webp_controller, output=StringIO())
+    view = ArgparseCliView(
+        DeduplicateCommand(duplicate_controller),
+        WebPCommand(webp_controller),
+        output=StringIO(),
+    )
 
-    view.run(["/photos", "--delete"])
+    with pytest.raises(SystemExit):
+        view.run(["/photos", "--delete"])
 
-    assert duplicate_controller.requests[0].directory == Path("/photos")
-    assert duplicate_controller.requests[0].options.delete is True
+    assert duplicate_controller.requests == []
+
+
+def test_cli_view_registers_arbitrary_subcommands() -> None:
+    commands = [RecordingCommand(f"record-{index}") for index in range(3)]
+    view = ArgparseCliView(*commands, output=StringIO())
+
+    for index, command in enumerate(commands):
+        assert view.run([command.name, f"value-{index}"]) == 0
+
+    assert [command.values for command in commands] == [
+        ["value-0"],
+        ["value-1"],
+        ["value-2"],
+    ]
+
+
+def test_cli_view_supports_no_subcommands() -> None:
+    output = StringIO()
+    view = ArgparseCliView(output=output)
+
+    assert view.run([]) == 0
+    assert "Clean up and optimize image directories." in output.getvalue()

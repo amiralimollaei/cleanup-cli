@@ -7,12 +7,8 @@ from collections.abc import Sequence
 from typing import Protocol, TextIO
 
 from ..controllers import (
-    Controller,
     DeduplicationController,
-    DeduplicationRequest,
-    DeduplicationResult,
     WebPConversionController,
-    WebPConversionRequest,
 )
 from ..models.abstractions import ImageDirectoryScanner, RecursiveDirectoryIndexer
 from ..models.image_duplicates import (
@@ -26,7 +22,6 @@ from ..models.image_duplicates import (
 from ..models.image_webp import (
     PillowWebPCodec,
     WebPDirectoryConverter,
-    WebPDirectoryConversionResult,
 )
 from .commands import DeduplicateCommand, WebPCommand
 
@@ -39,36 +34,34 @@ class CliView(Protocol):
         ...
 
 
+class ArgparseSubcommand(Protocol):
+    """Contract for a self-registering argparse subcommand."""
+
+    def add_to(self, subparsers: argparse._SubParsersAction) -> None:
+        """Register the subcommand and its arguments."""
+        ...
+
+    def execute(
+        self, args: argparse.Namespace, parser: argparse.ArgumentParser
+    ) -> None:
+        """Execute the parsed subcommand."""
+        ...
+
+
 class ArgparseCliView:
     """Argparse implementation of the cleanup command-line view."""
 
     def __init__(
         self,
-        deduplication: Controller[DeduplicationRequest, DeduplicationResult],
-        webp: Controller[WebPConversionRequest, WebPDirectoryConversionResult],
-        *,
+        *commands: ArgparseSubcommand,
         output: TextIO | None = None,
     ) -> None:
         self._output = output
-        self._deduplicate_command = DeduplicateCommand(deduplication, output=output)
-        self._commands = (
-            self._deduplicate_command,
-            WebPCommand(webp, output=output),
-        )
+        self._commands = commands
 
     def run(self, arguments: Sequence[str] | None = None) -> int:
         parser = self._build_parser()
         values = list(arguments) if arguments is not None else None
-
-        if values and values[0] not in {"deduplicate", "webp", "-h", "--help"}:
-            legacy_parser = argparse.ArgumentParser(
-                description="Recursively remove perceptually duplicate images."
-            )
-            self._deduplicate_command.configure_parser(legacy_parser)
-            args = legacy_parser.parse_args(values)
-            self._deduplicate_command.execute(args, legacy_parser)
-            return 0
-
         args = parser.parse_args(values)
         handler = getattr(args, "command_handler", None)
         if handler is None:
@@ -103,7 +96,7 @@ def create_cli_view(*, output: TextIO | None = None) -> ArgparseCliView:
     deduplication_controller = DeduplicationController(deduplicator)
     webp_controller = WebPConversionController(WebPDirectoryConverter(PillowWebPCodec()))
     return ArgparseCliView(
-        deduplication_controller,
-        webp_controller,
+        DeduplicateCommand(deduplication_controller, output=output),
+        WebPCommand(webp_controller, output=output),
         output=output,
     )

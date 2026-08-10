@@ -50,11 +50,12 @@ from .controllers import (
     WebPConversionController,
     WebPConversionRequest,
 )
-from .views import ArgparseCliView, CliView, create_cli_view
+from .views import ArgparseCliView, ArgparseSubcommand, CliView, create_cli_view
 
 
 __all__ = [
     "ArgparseCliView",
+    "ArgparseSubcommand",
     "CliView",
     "Controller",
     "Duplicate",

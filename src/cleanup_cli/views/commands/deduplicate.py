@@ -30,16 +30,6 @@ class DeduplicateCommand:
         """Register this command and all of its arguments."""
 
         parser = subparsers.add_parser(self.name, help=self.help)
-        self.configure_parser(parser)
-        parser.set_defaults(command_handler=self, command_parser=parser)
-
-    def configure_parser(self, parser: argparse.ArgumentParser) -> None:
-        """Add deduplication arguments to a parser.
-
-        This is public so the application can retain its legacy, command-less
-        deduplication syntax without duplicating this command's definition.
-        """
-
         parser.add_argument(
             "directory", type=Path, help="directory to scan recursively"
         )
@@ -65,6 +55,7 @@ class DeduplicateCommand:
                 "(default: executor default)"
             ),
         )
+        parser.set_defaults(command_handler=self, command_parser=parser)
 
     def execute(
         self, args: argparse.Namespace, parser: argparse.ArgumentParser
