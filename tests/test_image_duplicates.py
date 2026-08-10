@@ -14,7 +14,11 @@ from cleanup_cli import (
     perceptual_hash,
 )
 from cleanup_cli.models import image_duplicates
-from cleanup_cli.models.abstractions import IndexedFile, file_identity
+from cleanup_cli.models.abstractions import (
+    DirectoryIndexer,
+    IndexedFile,
+    file_identity,
+)
 from cleanup_cli.models.image_duplicates import Duplicate
 
 
@@ -395,3 +399,48 @@ def test_dry_run_keeps_files_and_delete_removes_only_earlier_match(
     deduplicate_directory(tmp_path, delete=True)
     assert not first.exists()
     assert last.exists()
+
+
+def test_reports_duplicate_after_successful_delete_and_totals_saved_bytes(
+    tmp_path: Path,
+) -> None:
+    first = tmp_path / "photo-1.pgm"
+    last = tmp_path / "photo-2.pgm"
+    first.write_bytes(b"duplicate-data")
+    last.write_bytes(b"kept-data")
+    indexed = [
+        IndexedFile(first, 123, file_identity(first)),
+        IndexedFile(last, 123, file_identity(last)),
+    ]
+    reported: list[Duplicate] = []
+
+    class StaticIndexer(DirectoryIndexer[int]):
+        def index(
+            self,
+            directory: Path,
+            *,
+            max_workers: int | None = None,
+            memory_limit_mb: int | None = None,
+        ) -> list[IndexedFile[int]]:
+            return indexed
+
+    from cleanup_cli.models.image_duplicates import (
+        DirectoryDeduplicator,
+        LocalFileRemover,
+        QualityAwareDuplicateDetector,
+    )
+
+    service = DirectoryDeduplicator(
+        StaticIndexer(),
+        QualityAwareDuplicateDetector(image_duplicates.ImageSignatureDistance()),
+        remover=LocalFileRemover(),
+    )
+    result = service.deduplicate(
+        tmp_path,
+        image_duplicates.DeduplicationOptions(delete=True),
+        on_result=reported.append,
+    )
+
+    assert not first.exists()
+    assert reported == result
+    assert result[0].saved_bytes == len(b"duplicate-data")

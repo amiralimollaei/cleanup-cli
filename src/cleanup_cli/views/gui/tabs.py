@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import gi  # pyright: ignore[reportMissingImports]
 
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gtk  # noqa: E402  # pyright: ignore[reportMissingImports, reportAttributeAccessIssue]
+from gi.repository import GLib, Gtk  # noqa: E402  # pyright: ignore[reportMissingImports, reportAttributeAccessIssue]
 
 from ...controllers import (
     Controller,
@@ -15,7 +16,15 @@ from ...controllers import (
     DeduplicationResult,
     WebPConversionRequest,
 )
-from ...models import DeduplicationOptions, WebPDirectoryConversionResult, WebPOptions
+from ...models import (
+    DeduplicationOptions,
+    Duplicate,
+    WebPConversion,
+    WebPDirectoryConversionResult,
+    WebPOptions,
+    WebPResult,
+    WebPSkip,
+)
 from .application import (
     ControllerGtkTab,
     add_form_row,
@@ -47,6 +56,8 @@ class DeduplicationGtkTab(
         self._automatic_memory: Gtk.CheckButton | None = None
         self._memory: Gtk.SpinButton | None = None
         self._delete: Gtk.Switch | None = None
+        self._streamed_count = 0
+        self._streamed_saved_bytes = 0
 
     @staticmethod
     def create_request(
@@ -141,10 +152,51 @@ class DeduplicationGtkTab(
                     "This action cannot be undone."
                 ),
                 action_label="Delete",
-                callback=lambda: self._submit(request, "Finding and deleting duplicates..."),
+                callback=lambda: self._submit_with_results(
+                    request,
+                    "Finding and deleting duplicates...",
+                ),
             )
             return
-        self._submit(request, "Finding duplicate images...")
+        self._submit_with_results(request, "Finding duplicate images...")
+
+    def _submit_with_results(
+        self,
+        request: DeduplicationRequest,
+        activity: str,
+    ) -> None:
+        self._prepare_results()
+        self._streamed_count = 0
+        self._streamed_saved_bytes = 0
+        self._submit(
+            replace(request, on_result=self._queue_duplicate),
+            activity,
+        )
+
+    def _queue_duplicate(self, duplicate: Duplicate) -> None:
+        GLib.idle_add(self._append_duplicate, duplicate)
+
+    def _append_duplicate(self, duplicate: Duplicate) -> bool:
+        if self._closed:
+            return GLib.SOURCE_REMOVE
+        if self._result_list is None:
+            raise RuntimeError("tab has not been built")
+        deleted = self._delete.get_active() if self._delete is not None else False
+        action = "Deleted" if deleted else "Would delete"
+        self._result_list.append(self._duplicate_row(duplicate, deleted, action))
+        self._streamed_count += 1
+        self._streamed_saved_bytes += duplicate.saved_bytes
+        status = "deleted" if deleted else "found"
+        self._set_summary(
+            "checkmark-symbolic",
+            self._summary_text(
+                self._streamed_count,
+                status,
+                self._streamed_saved_bytes,
+                deleted,
+            ),
+        )
+        return GLib.SOURCE_REMOVE
 
     def _request_from_form(self) -> DeduplicationRequest:
         if any(
@@ -192,24 +244,53 @@ class DeduplicationGtkTab(
                 "No duplicate images found",
                 "No files matched the selected similarity threshold.",
             )
-            self._set_summary("checkmark-symbolic", "0 duplicates found")
+            self._set_summary(
+                "checkmark-symbolic",
+                "0 duplicates found | 0 bytes would be saved",
+            )
             return
 
         result_list = self._prepare_results()
         action = "Deleted" if result.deleted else "Would delete"
         for duplicate in result.duplicates:
-            result_list.append(
-                result_row(
-                    "edit-delete-symbolic" if result.deleted else "edit-find-symbolic",
-                    f"{action}: {duplicate.removed}",
-                    f"Keep: {duplicate.kept} | Distance: {duplicate.distance}",
-                )
-            )
+            result_list.append(self._duplicate_row(duplicate, result.deleted, action))
         status = "deleted" if result.deleted else "found"
         count = len(result.duplicates)
         self._set_summary(
             "checkmark-symbolic",
-            f"{count} duplicate{'s' if count != 1 else ''} {status}",
+            self._summary_text(
+                count,
+                status,
+                result.total_saved_bytes,
+                result.deleted,
+            ),
+        )
+
+    @staticmethod
+    def _duplicate_row(
+        duplicate: Duplicate,
+        deleted: bool,
+        action: str,
+    ) -> Gtk.Widget:
+        savings = "Saved" if deleted else "Would save"
+        return result_row(
+            "edit-delete-symbolic" if deleted else "edit-find-symbolic",
+            f"{action}: {duplicate.removed}",
+            f"Keep: {duplicate.kept} | Distance: {duplicate.distance} | "
+            f"{savings}: {_format_bytes(duplicate.saved_bytes)}",
+        )
+
+    @staticmethod
+    def _summary_text(
+        count: int,
+        status: str,
+        saved_bytes: int,
+        deleted: bool,
+    ) -> str:
+        savings = "saved" if deleted else "would be saved"
+        return (
+            f"{count} duplicate{'s' if count != 1 else ''} {status} | "
+            f"{_format_bytes(saved_bytes)} {savings}"
         )
 
 
@@ -233,6 +314,9 @@ class WebPConversionGtkTab(
         self._automatic_memory: Gtk.CheckButton | None = None
         self._memory: Gtk.SpinButton | None = None
         self._replace: Gtk.Switch | None = None
+        self._streamed_conversions = 0
+        self._streamed_skips = 0
+        self._streamed_saved_bytes = 0
 
     @staticmethod
     def create_request(
@@ -326,10 +410,52 @@ class WebPConversionGtkTab(
                     "been validated. This action cannot be undone."
                 ),
                 action_label="Replace",
-                callback=lambda: self._submit(request, "Converting images to WebP..."),
+                callback=lambda: self._submit_with_results(
+                    request,
+                    "Converting images to WebP...",
+                ),
             )
             return
-        self._submit(request, "Checking WebP conversions...")
+        self._submit_with_results(request, "Checking WebP conversions...")
+
+    def _submit_with_results(
+        self,
+        request: WebPConversionRequest,
+        activity: str,
+    ) -> None:
+        self._prepare_results()
+        self._streamed_conversions = 0
+        self._streamed_skips = 0
+        self._streamed_saved_bytes = 0
+        self._submit(
+            replace(request, on_result=self._queue_result),
+            activity,
+        )
+
+    def _queue_result(self, result: WebPResult) -> None:
+        GLib.idle_add(self._append_result, result)
+
+    def _append_result(self, result: WebPResult) -> bool:
+        if self._closed:
+            return GLib.SOURCE_REMOVE
+        if self._result_list is None:
+            raise RuntimeError("tab has not been built")
+        if isinstance(result, WebPConversion):
+            self._result_list.append(self._conversion_row(result))
+            self._streamed_conversions += 1
+            self._streamed_saved_bytes += result.saved_bytes
+        elif isinstance(result, WebPSkip):
+            self._result_list.append(self._skip_row(result))
+            self._streamed_skips += 1
+        self._set_summary(
+            "checkmark-symbolic",
+            self._summary_text(
+                self._streamed_conversions,
+                self._streamed_skips,
+                self._streamed_saved_bytes,
+            ),
+        )
+        return GLib.SOURCE_REMOVE
 
     def _request_from_form(self) -> WebPConversionRequest:
         if any(
@@ -377,35 +503,49 @@ class WebPConversionGtkTab(
                 "No convertible images found",
                 "The directory contained no supported images requiring work.",
             )
-            self._set_summary("checkmark-symbolic", "0 converted, 0 skipped")
+            self._set_summary(
+                "checkmark-symbolic",
+                "0 converted, 0 skipped | 0 bytes saved",
+            )
             return
 
         result_list = self._prepare_results()
-        total_saved = 0
         for conversion in result.conversions:
-            saved = conversion.original_size - conversion.webp_size
-            total_saved += saved
-            result_list.append(
-                result_row(
-                    "image-x-generic-symbolic",
-                    f"Converted: {conversion.source}",
-                    f"Output: {conversion.destination} | Saved: {_format_bytes(saved)}",
-                )
-            )
+            result_list.append(self._conversion_row(conversion))
         for skip in result.skips:
-            result_list.append(
-                result_row(
-                    "dialog-information-symbolic",
-                    f"Skipped: {skip.path}",
-                    skip.reason,
-                )
-            )
-        summary = (
-            f"{len(result.conversions)} converted, {len(result.skips)} skipped"
+            result_list.append(self._skip_row(skip))
+        self._set_summary(
+            "checkmark-symbolic",
+            self._summary_text(
+                len(result.conversions),
+                len(result.skips),
+                result.total_saved_bytes,
+            ),
         )
-        if total_saved:
-            summary += f" | {_format_bytes(total_saved)} saved"
-        self._set_summary("checkmark-symbolic", summary)
+
+    @staticmethod
+    def _conversion_row(conversion: WebPConversion) -> Gtk.Widget:
+        return result_row(
+            "image-x-generic-symbolic",
+            f"Converted: {conversion.source}",
+            f"Output: {conversion.destination} | "
+            f"Saved: {_format_bytes(conversion.saved_bytes)}",
+        )
+
+    @staticmethod
+    def _skip_row(skip: WebPSkip) -> Gtk.Widget:
+        return result_row(
+            "dialog-information-symbolic",
+            f"Skipped: {skip.path}",
+            skip.reason,
+        )
+
+    @staticmethod
+    def _summary_text(converted: int, skipped: int, saved_bytes: int) -> str:
+        return (
+            f"{converted} converted, {skipped} skipped | "
+            f"{_format_bytes(saved_bytes)} saved"
+        )
 
 
 def _format_bytes(size: int) -> str:

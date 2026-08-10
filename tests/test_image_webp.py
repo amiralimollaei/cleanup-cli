@@ -13,7 +13,9 @@ from cleanup_cli.models.image_webp import (
     ImageInspection,
     PillowWebPCodec,
     WebPCodec,
+    WebPConversion,
     WebPDirectoryConverter,
+    WebPSkip,
     WebPOptions,
 )
 
@@ -55,6 +57,23 @@ def test_converts_recursively_in_place_without_changing_dimensions(tmp_path: Pat
     with Image.open(destination) as image:
         assert image.format == "WEBP"
         assert image.size == (128, 96)
+
+
+def test_reports_each_completed_result_and_total_saved_bytes(tmp_path: Path) -> None:
+    source = tmp_path / "photo.ppm"
+    _write_ppm(source)
+    original_size = source.stat().st_size
+    reported: list[WebPConversion | WebPSkip] = []
+
+    result = convert_directory_to_webp(
+        tmp_path,
+        replace=True,
+        on_result=reported.append,
+    )
+
+    assert reported == list(result.conversions) + list(result.skips)
+    assert result.total_saved_bytes == original_size - result.conversions[0].webp_size
+    assert result.conversions[0].saved_bytes == result.total_saved_bytes
 
 
 def test_skips_existing_webp_and_non_images(tmp_path: Path) -> None:

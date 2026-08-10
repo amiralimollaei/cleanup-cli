@@ -7,7 +7,13 @@ from pathlib import Path
 from typing import TextIO
 
 from ...controllers import Controller, WebPConversionRequest
-from ...models.image_webp import WebPDirectoryConversionResult, WebPOptions
+from ...models.image_webp import (
+    WebPConversion,
+    WebPDirectoryConversionResult,
+    WebPOptions,
+    WebPResult,
+    WebPSkip,
+)
 from .arguments import positive_int
 
 
@@ -69,7 +75,16 @@ class WebPCommand:
     ) -> None:
         """Build the request, invoke the controller, and render its result."""
 
+        reported: set[tuple[str, Path]] = set()
         try:
+            def on_result(item: WebPResult) -> None:
+                if isinstance(item, WebPConversion):
+                    reported.add(("conversion", item.source))
+                    self._print_conversion(item)
+                elif isinstance(item, WebPSkip):
+                    reported.add(("skip", item.path))
+                    self._print_skip(item)
+
             result = self._controller.execute(
                 WebPConversionRequest(
                     args.directory,
@@ -79,23 +94,32 @@ class WebPCommand:
                         max_workers=args.max_workers,
                         memory_limit_mb=args.memory_limit_mb,
                     ),
+                    on_result=on_result,
                 )
             )
         except (NotADirectoryError, ValueError) as error:
             parser.error(str(error))
 
         for conversion in result.conversions:
-            saved = conversion.original_size - conversion.webp_size
-            self._print(
-                f"converted: {conversion.source} -> {conversion.destination} "
-                f"(saved {saved} bytes)"
-            )
+            if ("conversion", conversion.source) not in reported:
+                self._print_conversion(conversion)
         for skip in result.skips:
-            self._print(f"skipped: {skip.path} ({skip.reason})")
+            if ("skip", skip.path) not in reported:
+                self._print_skip(skip)
         self._print(
             f"{len(result.conversions)} image(s) converted, "
             f"{len(result.skips)} image(s) skipped"
         )
+        self._print(f"total space saved: {result.total_saved_bytes} bytes")
+
+    def _print_conversion(self, conversion: WebPConversion) -> None:
+        self._print(
+            f"converted: {conversion.source} -> {conversion.destination} "
+            f"(saved {conversion.saved_bytes} bytes)"
+        )
+
+    def _print_skip(self, skip: WebPSkip) -> None:
+        self._print(f"skipped: {skip.path} ({skip.reason})")
 
     def _print(self, message: str) -> None:
-        print(message, file=self._output)
+        print(message, file=self._output, flush=True)

@@ -52,11 +52,12 @@ uv run --group gui cleanup-gui
 ```
 
 The application provides **Duplicate Images** and **WebP Conversion** tabs.
-Both default to non-destructive dry runs, display scrollable results, and run
-controller work in a background thread so the GTK event loop remains
-responsive. Enabling deletion or replacement requires confirmation. The UI
-uses symbolic icons from the active GNOME icon theme and follows GNOME's
-light/dark preference, including changes made while the application is open.
+Both default to non-destructive dry runs, display scrollable results as each
+completed item arrives, and update a cumulative space-saved summary while the
+controller runs in a background thread. Enabling deletion or replacement
+requires confirmation. The UI uses symbolic icons from the active GNOME icon
+theme and follows GNOME's light/dark preference, including changes made while
+the application is open.
 
 The main view is extensible and accepts zero or any number of tabs. A tab only
 needs a title, a symbolic icon name, and a method that builds its GTK widget:
@@ -89,6 +90,11 @@ The existing CLI remains available through `uv run cleanup-cli`. For example:
 uv run cleanup-cli deduplicate /path/to/photos
 uv run cleanup-cli webp /path/to/photos
 ```
+
+The CLI flushes every conversion, skip, or duplicate result as soon as it is
+available, then prints a final total. WebP totals are bytes actually removed
+by successful replacements. Deduplication dry runs report bytes that would be
+reclaimed; `--delete` reports bytes actually deleted.
 
 ## Architecture
 

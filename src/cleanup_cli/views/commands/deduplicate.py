@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TextIO
 
 from ...controllers import Controller, DeduplicationRequest, DeduplicationResult
-from ...models.image_duplicates import DeduplicationOptions
+from ...models.image_duplicates import DeduplicationOptions, Duplicate
 from .arguments import positive_int
 
 
@@ -72,7 +72,13 @@ class DeduplicateCommand:
     ) -> None:
         """Build the request, invoke the controller, and render its result."""
 
+        reported: set[Path] = set()
         try:
+            def on_result(duplicate: Duplicate) -> None:
+                reported.add(duplicate.removed)
+                action = "deleted" if args.delete else "would delete"
+                self._print_duplicate(action, duplicate)
+
             result = self._controller.execute(
                 DeduplicationRequest(
                     args.directory,
@@ -82,6 +88,7 @@ class DeduplicateCommand:
                         max_workers=args.max_workers,
                         memory_limit_mb=args.memory_limit_mb,
                     ),
+                    on_result=on_result,
                 )
             )
         except (NotADirectoryError, ValueError) as error:
@@ -89,12 +96,22 @@ class DeduplicateCommand:
 
         action = "deleted" if result.deleted else "would delete"
         for duplicate in result.duplicates:
-            self._print(
-                f"{action}: {duplicate.removed} "
-                f"(keeping {duplicate.kept}, distance {duplicate.distance})"
-            )
+            if duplicate.removed not in reported:
+                self._print_duplicate(action, duplicate)
         status = "deleted" if result.deleted else "found"
         self._print(f"{len(result.duplicates)} duplicate(s) {status}")
+        savings = "saved" if result.deleted else "that would be saved"
+        self._print(
+            f"total space {savings}: {result.total_saved_bytes} bytes"
+        )
+
+    def _print_duplicate(self, action: str, duplicate: Duplicate) -> None:
+        savings = "saved" if action == "deleted" else "would save"
+        self._print(
+            f"{action}: {duplicate.removed} "
+            f"(keeping {duplicate.kept}, distance {duplicate.distance}, "
+            f"{savings} {duplicate.saved_bytes} bytes)"
+        )
 
     def _print(self, message: str) -> None:
-        print(message, file=self._output)
+        print(message, file=self._output, flush=True)

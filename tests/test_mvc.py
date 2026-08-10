@@ -24,6 +24,7 @@ from cleanup_cli.models import (
     WebPOptions,
     WebPSkip,
 )
+from cleanup_cli.models.abstractions import FileIdentity
 from cleanup_cli.views import ArgparseCliView
 from cleanup_cli.views.commands import DeduplicateCommand, WebPCommand
 
@@ -97,7 +98,12 @@ def test_deduplication_controller_returns_immutable_view_model(tmp_path: Path) -
 
 
 def test_cli_view_builds_deduplication_request_and_renders_result() -> None:
-    duplicate = Duplicate(Path("1.jpg"), Path("2.jpg"), 3)
+    duplicate = Duplicate(
+        Path("1.jpg"),
+        Path("2.jpg"),
+        3,
+        FileIdentity(1, 2, 75, 3),
+    )
     duplicate_controller = RecordingController(
         DeduplicationResult((duplicate,), deleted=False)
     )
@@ -135,8 +141,9 @@ def test_cli_view_builds_deduplication_request_and_renders_result() -> None:
         )
     ]
     assert output.getvalue().splitlines() == [
-        "would delete: 1.jpg (keeping 2.jpg, distance 3)",
+        "would delete: 1.jpg (keeping 2.jpg, distance 3, would save 75 bytes)",
         "1 duplicate(s) found",
+        "total space that would be saved: 75 bytes",
     ]
 
 
@@ -184,7 +191,67 @@ def test_cli_view_builds_webp_request_and_renders_result() -> None:
         "converted: photo.png -> photo.webp (saved 60 bytes)",
         "skipped: small.png (WebP would not be smaller)",
         "1 image(s) converted, 1 image(s) skipped",
+        "total space saved: 60 bytes",
     ]
+
+
+def test_cli_renders_streamed_results_before_controller_returns() -> None:
+    duplicate = Duplicate(
+        Path("early.jpg"),
+        Path("kept.jpg"),
+        0,
+        FileIdentity(1, 2, 32, 3),
+    )
+    output = StringIO()
+
+    class StreamingController(
+        Controller[DeduplicationRequest, DeduplicationResult]
+    ):
+        def execute(self, request: DeduplicationRequest) -> DeduplicationResult:
+            assert request.on_result is not None
+            request.on_result(duplicate)
+            assert "would delete: early.jpg" in output.getvalue()
+            assert "duplicate(s) found" not in output.getvalue()
+            return DeduplicationResult((duplicate,), deleted=False)
+
+    view = ArgparseCliView(
+        DeduplicateCommand(StreamingController(), output=output),
+        output=output,
+    )
+
+    assert view.run(["deduplicate", "/photos"]) == 0
+    assert output.getvalue().count("would delete: early.jpg") == 1
+
+
+def test_cli_renders_streamed_webp_result_before_controller_returns() -> None:
+    conversion = WebPConversion(
+        Path("early.png"),
+        Path("early.webp"),
+        original_size=100,
+        webp_size=25,
+    )
+    output = StringIO()
+
+    class StreamingController(
+        Controller[WebPConversionRequest, WebPDirectoryConversionResult]
+    ):
+        def execute(
+            self,
+            request: WebPConversionRequest,
+        ) -> WebPDirectoryConversionResult:
+            assert request.on_result is not None
+            request.on_result(conversion)
+            assert "converted: early.png" in output.getvalue()
+            assert "image(s) converted" not in output.getvalue()
+            return WebPDirectoryConversionResult((conversion,), ())
+
+    view = ArgparseCliView(
+        WebPCommand(StreamingController(), output=output),
+        output=output,
+    )
+
+    assert view.run(["webp", "/photos", "--replace"]) == 0
+    assert output.getvalue().count("converted: early.png") == 1
 
 
 def test_cli_view_rejects_non_positive_webp_worker_count() -> None:

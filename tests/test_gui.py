@@ -25,6 +25,7 @@ from cleanup_cli.models import (
     WebPOptions,
     WebPSkip,
 )
+from cleanup_cli.models.abstractions import FileIdentity
 from cleanup_cli.views.gui import (
     DeduplicationGtkTab,
     GtkGuiView,
@@ -216,7 +217,12 @@ def test_production_gui_composes_both_cleanup_tabs() -> None:
 
 @requires_display
 def test_deduplication_tab_builds_form_request_and_renders_results() -> None:
-    duplicate = Duplicate(Path("one.jpg"), Path("two.jpg"), 3)
+    duplicate = Duplicate(
+        Path("one.jpg"),
+        Path("two.jpg"),
+        3,
+        FileIdentity(1, 2, 2048, 3),
+    )
     controller = RecordingController(
         DeduplicationResult((duplicate,), deleted=False)
     )
@@ -250,7 +256,10 @@ def test_deduplication_tab_builds_form_request_and_renders_results() -> None:
     assert tab._result_list is not None
     assert tab._result_list.get_first_child() is not None
     assert tab._summary_label is not None
-    assert tab._summary_label.get_text() == "1 duplicate found"
+    assert (
+        tab._summary_label.get_text()
+        == "1 duplicate found | 2.0 KiB would be saved"
+    )
     tab.shutdown()
 
 
@@ -323,5 +332,66 @@ def test_controller_execution_runs_off_the_gtk_thread() -> None:
     assert controller.requests == [request]
     assert controller.thread_ids != [gtk_thread]
     assert tab._summary_label is not None
-    assert tab._summary_label.get_text() == "0 duplicates found"
+    assert (
+        tab._summary_label.get_text()
+        == "0 duplicates found | 0 bytes would be saved"
+    )
+    tab.shutdown()
+
+
+@requires_display
+def test_gui_appends_streamed_results_while_task_is_running() -> None:
+    duplicate = Duplicate(
+        Path("early.jpg"),
+        Path("kept.jpg"),
+        0,
+        FileIdentity(1, 2, 1024, 3),
+    )
+    controller = RecordingController(DeduplicationResult((duplicate,), False))
+    tab = DeduplicationGtkTab(controller)
+    tab.build()
+    tab._running = True
+
+    assert tab._append_duplicate(duplicate) is GLib.SOURCE_REMOVE
+
+    assert tab._running
+    assert tab._result_list is not None
+    assert tab._result_list.get_first_child() is not None
+    assert tab._summary_label is not None
+    assert (
+        tab._summary_label.get_text()
+        == "1 duplicate found | 1.0 KiB would be saved"
+    )
+    tab.shutdown()
+
+
+@requires_display
+def test_gui_appends_streamed_webp_results_while_task_is_running() -> None:
+    conversion = WebPConversion(
+        Path("early.png"),
+        Path("early.webp"),
+        original_size=2048,
+        webp_size=512,
+    )
+    skip = WebPSkip(Path("small.png"), "WebP would not be smaller")
+    controller = RecordingController(
+        WebPDirectoryConversionResult((conversion,), (skip,))
+    )
+    tab = WebPConversionGtkTab(controller)
+    tab.build()
+    tab._running = True
+
+    assert tab._append_result(conversion) is GLib.SOURCE_REMOVE
+    assert tab._append_result(skip) is GLib.SOURCE_REMOVE
+
+    assert tab._running
+    assert tab._result_list is not None
+    first = tab._result_list.get_first_child()
+    assert first is not None
+    assert first.get_next_sibling() is not None
+    assert tab._summary_label is not None
+    assert (
+        tab._summary_label.get_text()
+        == "1 converted, 1 skipped | 1.5 KiB saved"
+    )
     tab.shutdown()

@@ -8,7 +8,7 @@ import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Generic, TypeVar
+from typing import Callable, Generic, TypeAlias, TypeVar
 
 import tqdm
 from PIL import Image, UnidentifiedImageError
@@ -43,6 +43,12 @@ class WebPConversion:
     original_size: int
     webp_size: int
 
+    @property
+    def saved_bytes(self) -> int:
+        """Return the number of bytes removed by this conversion."""
+
+        return self.original_size - self.webp_size
+
 
 @dataclass(frozen=True, slots=True)
 class WebPSkip:
@@ -58,6 +64,16 @@ class WebPDirectoryConversionResult:
 
     conversions: tuple[WebPConversion, ...]
     skips: tuple[WebPSkip, ...]
+
+    @property
+    def total_saved_bytes(self) -> int:
+        """Return the aggregate storage saved by completed conversions."""
+
+        return sum(conversion.saved_bytes for conversion in self.conversions)
+
+
+WebPResult: TypeAlias = WebPConversion | WebPSkip
+WebPResultObserver: TypeAlias = Callable[[WebPResult], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,6 +216,8 @@ class WebPDirectoryConverter(Generic[FrameT]):
         self,
         directory: Path,
         options: WebPOptions | None = None,
+        *,
+        on_result: WebPResultObserver | None = None,
     ) -> WebPDirectoryConversionResult:
         request = options or WebPOptions()
 
@@ -221,22 +239,28 @@ class WebPDirectoryConverter(Generic[FrameT]):
             if isinstance(inspected, _ConversionCandidate):
                 required = inspected.inspection.estimated_peak_bytes
                 if required > memory_limit:
-                    ordered_results[index] = WebPSkip(
+                    skip = WebPSkip(
                         path,
                         "estimated conversion memory "
                         f"({_format_mebibytes(required)}) exceeds limit "
                         f"({_format_mebibytes(memory_limit)})",
                     )
+                    ordered_results[index] = skip
+                    if on_result is not None:
+                        on_result(skip)
                 else:
                     candidates.append(inspected)
             else:
                 ordered_results[index] = inspected
+                if inspected is not None and on_result is not None:
+                    on_result(inspected)
 
         self._convert_candidates(
             candidates,
             ordered_results,
             request,
             memory_limit=memory_limit,
+            on_result=on_result,
         )
 
         conversions: list[WebPConversion] = []
@@ -290,6 +314,7 @@ class WebPDirectoryConverter(Generic[FrameT]):
         options: WebPOptions,
         *,
         memory_limit: int,
+        on_result: WebPResultObserver | None,
     ) -> None:
         """Run candidates while their estimated aggregate memory fits."""
 
@@ -307,6 +332,8 @@ class WebPDirectoryConverter(Generic[FrameT]):
             results, total=len(candidates), desc="converting", unit="file"
         ):
             ordered_results[candidate.index] = result
+            if result is not None and on_result is not None:
+                on_result(result)
 
     def _convert_file_safely(
         self,
@@ -420,6 +447,7 @@ def convert_directory_to_webp(
     replace: bool = False,
     max_workers: int | None = None,
     memory_limit_mb: int | None = None,
+    on_result: WebPResultObserver | None = None,
 ) -> WebPDirectoryConversionResult:
     """Recursively replace images with smaller, equally sized WebP files.
 
@@ -437,4 +465,4 @@ def convert_directory_to_webp(
         max_workers=max_workers,
         memory_limit_mb=memory_limit_mb,
     )
-    return converter.convert(Path(directory), options)
+    return converter.convert(Path(directory), options, on_result=on_result)

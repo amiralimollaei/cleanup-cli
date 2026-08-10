@@ -11,11 +11,13 @@ from ..models.image_duplicates import (
     DeduplicationOptions,
     DirectoryDeduplicator,
     Duplicate,
+    DuplicateObserver,
 )
 from ..models.image_webp import (
     WebPDirectoryConverter,
     WebPDirectoryConversionResult,
     WebPOptions,
+    WebPResultObserver,
 )
 
 
@@ -39,6 +41,11 @@ class DeduplicationRequest:
 
     directory: Path
     options: DeduplicationOptions = field(default_factory=DeduplicationOptions)
+    on_result: DuplicateObserver | None = field(
+        default=None,
+        compare=False,
+        repr=False,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +54,12 @@ class DeduplicationResult:
 
     duplicates: tuple[Duplicate, ...]
     deleted: bool
+
+    @property
+    def total_saved_bytes(self) -> int:
+        """Return deleted or potentially reclaimable duplicate bytes."""
+
+        return sum(duplicate.saved_bytes for duplicate in self.duplicates)
 
 
 class DeduplicationController(
@@ -59,7 +72,11 @@ class DeduplicationController(
         self._model = model
 
     def execute(self, request: DeduplicationRequest) -> DeduplicationResult:
-        duplicates = self._model.deduplicate(request.directory, request.options)
+        duplicates = self._model.deduplicate(
+            request.directory,
+            request.options,
+            on_result=request.on_result,
+        )
         return DeduplicationResult(tuple(duplicates), request.options.delete)
 
 
@@ -69,6 +86,11 @@ class WebPConversionRequest:
 
     directory: Path
     options: WebPOptions = field(default_factory=WebPOptions)
+    on_result: WebPResultObserver | None = field(
+        default=None,
+        compare=False,
+        repr=False,
+    )
 
 
 class WebPConversionController(
@@ -81,4 +103,8 @@ class WebPConversionController(
         self._model = model
 
     def execute(self, request: WebPConversionRequest) -> WebPDirectoryConversionResult:
-        return self._model.convert(request.directory, request.options)
+        return self._model.convert(
+            request.directory,
+            request.options,
+            on_result=request.on_result,
+        )

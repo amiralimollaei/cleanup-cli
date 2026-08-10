@@ -7,7 +7,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Callable, Generic, Protocol, TypeVar
+from typing import Callable, Generic, Protocol, TypeAlias, TypeVar
 import warnings
 
 import numpy as np
@@ -47,6 +47,20 @@ class Duplicate:
     kept: Path
     distance: int
     removed_identity: FileIdentity | None = field(default=None, compare=False)
+
+    @property
+    def saved_bytes(self) -> int:
+        """Return the storage reclaimed when the duplicate is deleted."""
+
+        if self.removed_identity is not None:
+            return self.removed_identity.size
+        try:
+            return self.removed.stat().st_size
+        except OSError:
+            return 0
+
+
+DuplicateObserver: TypeAlias = Callable[[Duplicate], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,6 +270,8 @@ class DuplicateDetector(ABC, Generic[SignatureT]):
         self,
         images: Sequence[IndexedFile[SignatureT]],
         threshold: int = 0,
+        *,
+        on_duplicate: DuplicateObserver | None = None,
     ) -> list[Duplicate]:
         """Return files considered duplicates under *threshold*."""
 
@@ -407,6 +423,8 @@ class QualityAwareDuplicateDetector(DuplicateDetector[SignatureT]):
         self,
         images: Sequence[IndexedFile[SignatureT]],
         threshold: int = 0,
+        *,
+        on_duplicate: DuplicateObserver | None = None,
     ) -> list[Duplicate]:
         _validate_threshold(threshold)
 
@@ -427,9 +445,12 @@ class QualityAwareDuplicateDetector(DuplicateDetector[SignatureT]):
                 index.add(image.value, len(kept))
                 kept.append(image)
             else:
-                duplicates.append(
-                    Duplicate(image.path, match[0], match[1], image.identity)
+                duplicate = Duplicate(
+                    image.path, match[0], match[1], image.identity
                 )
+                duplicates.append(duplicate)
+                if on_duplicate is not None:
+                    on_duplicate(duplicate)
 
         if not duplicates:
             return duplicates
@@ -490,6 +511,8 @@ class DirectoryDeduplicator(Generic[SignatureT]):
         self,
         directory: Path,
         options: DeduplicationOptions | None = None,
+        *,
+        on_result: DuplicateObserver | None = None,
     ) -> list[Duplicate]:
         request = options or DeduplicationOptions()
         images = self._indexer.index(
@@ -497,12 +520,38 @@ class DirectoryDeduplicator(Generic[SignatureT]):
             max_workers=request.max_workers,
             memory_limit_mb=request.memory_limit_mb,
         )
-        duplicates = self._detector.find(images, request.threshold)
+        reported: dict[Path, Duplicate] = {}
 
-        if request.delete:
-            for duplicate in duplicates:
+        def handle(duplicate: Duplicate) -> None:
+            # Indexers normally provide the identity, but retaining it here
+            # also makes totals correct for lightweight injected indexers.
+            if duplicate.removed_identity is None:
+                try:
+                    duplicate = Duplicate(
+                        duplicate.removed,
+                        duplicate.kept,
+                        duplicate.distance,
+                        file_identity(duplicate.removed),
+                    )
+                except OSError:
+                    pass
+            reported[duplicate.removed] = duplicate
+            if request.delete:
                 self._remover.remove(duplicate.removed, duplicate.removed_identity)
-        return duplicates
+            if on_result is not None:
+                on_result(duplicate)
+
+        if request.delete or on_result is not None:
+            duplicates = self._detector.find(
+                images,
+                request.threshold,
+                on_duplicate=handle,
+            )
+        else:
+            # Preserve compatibility with injected detectors that implement
+            # the original two-argument protocol.
+            duplicates = self._detector.find(images, request.threshold)
+        return [reported.get(duplicate.removed, duplicate) for duplicate in duplicates]
 
 
 class ImageIndexAdapter(DirectoryIndexer[int | ImageSignature]):
@@ -583,6 +632,7 @@ def deduplicate_directory(
     delete: bool = False,
     max_workers: int | None = None,
     memory_limit_mb: int | None = None,
+    on_result: DuplicateObserver | None = None,
 ) -> list[Duplicate]:
     """Find duplicates recursively and optionally delete earlier paths."""
 
@@ -598,4 +648,4 @@ def deduplicate_directory(
         max_workers=max_workers,
         memory_limit_mb=memory_limit_mb,
     )
-    return model.deduplicate(Path(directory), options)
+    return model.deduplicate(Path(directory), options, on_result=on_result)
