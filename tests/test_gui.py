@@ -200,6 +200,19 @@ def test_gui_main_view_supports_no_tabs() -> None:
 
 
 @requires_display
+def test_gui_header_title_has_vertical_padding() -> None:
+    view = GtkGuiView(
+        application_id="io.github.amiralimollaei.CleanupCli.HeaderTest"
+    )
+
+    heading = view._build_header_bar().get_title_widget()
+
+    assert heading is not None
+    assert heading.get_margin_top() == 6
+    assert heading.get_margin_bottom() == 6
+
+
+@requires_display
 def test_gui_follows_gnome_color_scheme() -> None:
     synchronizer = GnomeThemeSynchronizer()
     interface = GnomeThemeSynchronizer._create_settings()

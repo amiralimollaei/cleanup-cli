@@ -88,6 +88,8 @@ class GtkGuiView:
     def _build_header_bar(self) -> Gtk.HeaderBar:
         header = Gtk.HeaderBar()
         heading = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        heading.set_margin_top(6)
+        heading.set_margin_bottom(6)
         title = Gtk.Label(label=self._title)
         title.add_css_class("title")
         subtitle = Gtk.Label(label="Image maintenance tools")
