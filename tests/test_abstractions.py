@@ -1,6 +1,8 @@
+from dataclasses import is_dataclass
 from pathlib import Path
 from threading import Condition, Lock
 from time import sleep
+from types import ModuleType
 from typing import Any, Callable
 
 import pytest
@@ -19,10 +21,11 @@ from cleanup_cli import (
     WebPDirectoryConverter,
     WebPOptions,
 )
-from cleanup_cli.models.image_duplicates import Duplicate
-from cleanup_cli.models.abstractions import file_identity
+from cleanup_cli.models.abstractions import FileIdentity, file_identity
 from cleanup_cli.models.image_duplicates import FileChangedError, LocalFileRemover
-from cleanup_cli.models import abstractions
+from cleanup_cli.models.image_duplicates import Duplicate
+from cleanup_cli.controllers import core as controller_models
+from cleanup_cli.models import abstractions, image_duplicates, image_webp, parallel
 
 
 class TextLengthAnalyzer:
@@ -55,7 +58,7 @@ class RecordingRemover:
     def __init__(self) -> None:
         self.removed: list[Path] = []
 
-    def remove(self, path: Path) -> None:
+    def remove(self, path: Path, expected: FileIdentity | None = None) -> None:
         self.removed.append(path)
 
 
@@ -267,9 +270,7 @@ def test_recursive_indexer_bounds_submitted_work(
             return DeferredFuture(function, path)
 
     executor = RecordingExecutor()
-    monkeypatch.setattr(
-        abstractions, "ThreadPoolExecutor", lambda max_workers: executor
-    )
+    monkeypatch.setattr(parallel, "ThreadPoolExecutor", lambda max_workers: executor)
     indexer = RecursiveDirectoryIndexer(
         TextLengthAnalyzer(), scanner=StaticScanner(paths), ignored_errors=()
     )
@@ -335,7 +336,7 @@ def test_webp_converter_uses_injected_codec(tmp_path: Path) -> None:
     codec = FakeWebPCodec(encoded_size=4)
 
     result = WebPDirectoryConverter(codec).convert(
-        tmp_path, quality=73, replace=True
+        tmp_path, WebPOptions(quality=73, replace=True)
     )
     conversions = result.conversions
     skips = result.skips
@@ -359,7 +360,7 @@ def test_webp_converter_uses_injected_scanner(tmp_path: Path) -> None:
     result = WebPDirectoryConverter(
         FakeWebPCodec(),
         scanner=StaticScanner([included]),
-    ).convert(tmp_path, replace=True)
+    ).convert(tmp_path, WebPOptions(replace=True))
 
     conversions = result.conversions
     assert [conversion.source for conversion in conversions] == [included]
@@ -370,6 +371,43 @@ def test_webp_converter_uses_injected_scanner(tmp_path: Path) -> None:
 def test_webp_options_validate_quality(quality: int) -> None:
     with pytest.raises(ValueError, match="between 0 and 100"):
         WebPOptions(quality)
+
+
+@pytest.mark.parametrize(
+    "module",
+    [controller_models, abstractions, image_duplicates, image_webp],
+)
+def test_production_dataclasses_use_slots(module: ModuleType) -> None:
+    dataclasses = [
+        value
+        for value in vars(module).values()
+        if isinstance(value, type)
+        and value.__module__ == module.__name__
+        and is_dataclass(value)
+    ]
+
+    assert dataclasses
+    assert all("__slots__" in value.__dict__ for value in dataclasses)
+    assert all("__dict__" not in value.__dict__ for value in dataclasses)
+
+
+def test_no_clobber_copy_fallback_preserves_existing_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.bin"
+    destination = tmp_path / "destination.bin"
+    source.write_bytes(b"source")
+    destination.write_bytes(b"existing")
+    monkeypatch.setattr(abstractions.os, "link", _unsupported_link)
+
+    with pytest.raises(FileExistsError):
+        abstractions.hard_link_no_clobber(source, destination)
+
+    assert destination.read_bytes() == b"existing"
+
+
+def _unsupported_link(*args: object, **kwargs: object) -> None:
+    raise NotImplementedError
 
 
 def test_image_directory_scanner_only_yields_still_images(

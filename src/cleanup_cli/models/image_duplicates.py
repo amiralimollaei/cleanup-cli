@@ -448,7 +448,7 @@ class QualityAwareDuplicateDetector(DuplicateDetector[SignatureT]):
 class FileRemover(Protocol):
     """Remove a file selected by a deduplication policy."""
 
-    def remove(self, path: Path) -> None:
+    def remove(self, path: Path, expected: FileIdentity | None = None) -> None:
         """Remove *path* from storage."""
         ...
 
@@ -492,30 +492,16 @@ class DirectoryDeduplicator(Generic[SignatureT]):
         options: DeduplicationOptions | None = None,
     ) -> list[Duplicate]:
         request = options or DeduplicationOptions()
-        if request.memory_limit_mb is None and request.max_workers is None:
-            images = self._indexer.index(directory)
-        elif request.memory_limit_mb is None:
-            images = self._indexer.index(directory, max_workers=request.max_workers)
-        elif request.max_workers is None:
-            images = self._indexer.index(
-                directory, memory_limit_mb=request.memory_limit_mb
-            )
-        else:
-            images = self._indexer.index(
-                directory,
-                max_workers=request.max_workers,
-                memory_limit_mb=request.memory_limit_mb,
-            )
+        images = self._indexer.index(
+            directory,
+            max_workers=request.max_workers,
+            memory_limit_mb=request.memory_limit_mb,
+        )
         duplicates = self._detector.find(images, request.threshold)
 
         if request.delete:
             for duplicate in duplicates:
-                if isinstance(self._remover, LocalFileRemover):
-                    self._remover.remove(
-                        duplicate.removed, duplicate.removed_identity
-                    )
-                else:
-                    self._remover.remove(duplicate.removed)
+                self._remover.remove(duplicate.removed, duplicate.removed_identity)
         return duplicates
 
 

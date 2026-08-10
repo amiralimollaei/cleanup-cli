@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections import deque
-from collections.abc import Callable, Iterable, Iterator
-from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
@@ -16,6 +14,7 @@ import tqdm
 from PIL import Image, UnidentifiedImageError
 
 from .image_memory import MEBIBYTE, automatic_memory_limit
+from .parallel import ordered_parallel_map, weighted_parallel_map
 from .path_sort import sort_numbered_paths
 
 
@@ -55,9 +54,18 @@ def hard_link_no_clobber(source: Path, destination: Path) -> None:
         os.link(source, destination, follow_symlinks=False)
     except (AttributeError, NotImplementedError):
         # os.link is missing or unsupported on this platform.
-        with open(source, "rb") as input_stream, open(destination, "xb") as output_stream:
-            while chunk := input_stream.read(65536):
-                output_stream.write(chunk)
+        created = False
+        try:
+            with open(source, "rb") as input_stream, open(
+                destination, "xb"
+            ) as output_stream:
+                created = True
+                while chunk := input_stream.read(65536):
+                    output_stream.write(chunk)
+        except BaseException:
+            if created:
+                destination.unlink(missing_ok=True)
+            raise
 
 
 def quarantine_if_unchanged(path: Path, expected: FileIdentity) -> Path:
@@ -72,7 +80,11 @@ def quarantine_if_unchanged(path: Path, expected: FileIdentity) -> Path:
         tempfile.mkdtemp(dir=path.parent, prefix=f".{path.name}-quarantine-")
     )
     quarantine = quarantine_directory / path.name
-    os.rename(path, quarantine)
+    try:
+        os.rename(path, quarantine)
+    except BaseException:
+        quarantine_directory.rmdir()
+        raise
     if file_identity(quarantine) == expected:
         return quarantine
 
@@ -233,7 +245,7 @@ class RecursiveDirectoryScanner:
 
 
 class ImageDirectoryScanner:
-    """Recursively discover only still-image files in a stable order.
+    """Recursively discover recognized image files in a stable order.
 
     Videos and other non-image files never reach a decoder, so a large media
     file cannot exhaust memory merely by being probed as a potential image.
@@ -248,7 +260,7 @@ class ImageDirectoryScanner:
         self._filter = filter or ImageExtensionFilter()
 
     def scan(self, directory: Path) -> Iterator[Path]:
-        for path in self._recursive._discover(directory):
+        for path in self._recursive.scan(directory):
             if self._filter.accepts(path):
                 yield path
 
@@ -306,19 +318,16 @@ class RecursiveDirectoryIndexer(DirectoryIndexer[ValueT]):
             )
 
         indexed: list[IndexedFile[ValueT]] = []
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            worker_count = max_workers or min(32, (os.cpu_count() or 1) + 4)
-            results = _ordered_bounded_map(
-                executor,
-                self._index_file_safely,
-                paths,
-                max_pending=worker_count * 2,
-            )
-            for result in tqdm.tqdm(
-                results, total=len(paths), desc=f"indexing {directory}", unit="file"
-            ):
-                if result is not None:
-                    indexed.append(result)
+        results = ordered_parallel_map(
+            self._index_file_safely,
+            paths,
+            max_workers=max_workers,
+        )
+        for result in tqdm.tqdm(
+            results, total=len(paths), desc=f"indexing {directory}", unit="file"
+        ):
+            if result is not None:
+                indexed.append(result)
         return indexed
 
     def _index_with_memory_limit(
@@ -339,45 +348,17 @@ class RecursiveDirectoryIndexer(DirectoryIndexer[ValueT]):
             if candidate is not None and candidate.estimated_peak_bytes <= memory_limit:
                 candidates.append(candidate)
 
-        worker_count = max_workers or min(32, (os.cpu_count() or 1) + 4)
-        waiting = sorted(
+        results = weighted_parallel_map(
+            self._index_candidate_safely,
             candidates,
-            key=lambda candidate: (-candidate.estimated_peak_bytes, candidate.index),
+            weight=lambda candidate: candidate.estimated_peak_bytes,
+            capacity=memory_limit,
+            max_workers=max_workers,
         )
-        pending: dict[Future[IndexedFile[ValueT] | None], _IndexCandidate] = {}
-        available = memory_limit
-
-        with (
-            ThreadPoolExecutor(max_workers=worker_count) as executor,
-            tqdm.tqdm(total=len(candidates), desc="indexing", unit="file") as progress,
+        for candidate, result in tqdm.tqdm(
+            results, total=len(candidates), desc="indexing", unit="file"
         ):
-            while waiting or pending:
-                while len(pending) < worker_count:
-                    next_index = next(
-                        (
-                            index
-                            for index, candidate in enumerate(waiting)
-                            if candidate.estimated_peak_bytes <= available
-                        ),
-                        None,
-                    )
-                    if next_index is None:
-                        break
-                    candidate = waiting.pop(next_index)
-                    available -= candidate.estimated_peak_bytes
-                    future = executor.submit(
-                        self._index_file_safely,
-                        candidate.path,
-                        candidate.identity,
-                    )
-                    pending[future] = candidate
-
-                completed, _ = wait(pending, return_when=FIRST_COMPLETED)
-                for future in completed:
-                    candidate = pending.pop(future)
-                    available += candidate.estimated_peak_bytes
-                    ordered[candidate.index] = future.result()
-                    progress.update()
+            ordered[candidate.index] = result
 
         return [item for item in ordered if item is not None]
 
@@ -413,6 +394,12 @@ class RecursiveDirectoryIndexer(DirectoryIndexer[ValueT]):
         except self._ignored_errors:
             return None
 
+    def _index_candidate_safely(
+        self,
+        candidate: _IndexCandidate,
+    ) -> IndexedFile[ValueT] | None:
+        return self._index_file_safely(candidate.path, candidate.identity)
+
 
 @dataclass(frozen=True, slots=True)
 class _IndexCandidate:
@@ -422,32 +409,3 @@ class _IndexCandidate:
     path: Path
     identity: FileIdentity
     estimated_peak_bytes: int
-
-
-def _ordered_bounded_map(
-    executor: ThreadPoolExecutor,
-    function: Callable[[Path], ValueT],
-    values: Iterable[Path],
-    *,
-    max_pending: int,
-) -> Iterator[ValueT]:
-    """Map in input order without eagerly submitting the entire iterable."""
-
-    iterator = iter(values)
-    pending = deque()
-    for _ in range(max_pending):
-        try:
-            value = next(iterator)
-        except StopIteration:
-            break
-        pending.append(executor.submit(function, value))
-
-    while pending:
-        result = pending.popleft().result()
-        try:
-            value = next(iterator)
-        except StopIteration:
-            pass
-        else:
-            pending.append(executor.submit(function, value))
-        yield result

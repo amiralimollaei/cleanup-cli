@@ -386,7 +386,7 @@ def test_dry_run_keeps_files_and_delete_removes_only_earlier_match(
     ]
     monkeypatch.setattr(
         "cleanup_cli.models.image_duplicates.ImageIndexAdapter.index",
-        lambda self, directory: indexed,
+        lambda self, directory, *, max_workers=None, memory_limit_mb=None: indexed,
     )
 
     assert deduplicate_directory(tmp_path) == [Duplicate(first, last, 0)]

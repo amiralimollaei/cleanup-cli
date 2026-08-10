@@ -6,7 +6,6 @@ import os
 import tempfile
 import warnings
 from abc import ABC, abstractmethod
-from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, TypeVar
@@ -29,12 +28,13 @@ from .image_memory import (
     format_mebibytes as _format_mebibytes,
     memory_limit_for_available,
 )
+from .parallel import weighted_parallel_map
 
 
 FrameT = TypeVar("FrameT")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class WebPConversion:
     """One source image replaced by a smaller WebP image."""
 
@@ -44,7 +44,7 @@ class WebPConversion:
     webp_size: int
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class WebPSkip:
     """A file that was recognized as an image but not converted."""
 
@@ -52,7 +52,7 @@ class WebPSkip:
     reason: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class WebPDirectoryConversionResult:
     """All conversions and skips produced by one directory operation."""
 
@@ -60,7 +60,7 @@ class WebPDirectoryConversionResult:
     skips: tuple[WebPSkip, ...]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class WebPOptions:
     """Validated options for a directory WebP conversion."""
 
@@ -78,7 +78,7 @@ class WebPOptions:
             raise ValueError("memory_limit_mb must be greater than 0")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ImageInspection:
     """Header metadata used to schedule an image before decoding its pixels."""
 
@@ -95,7 +95,7 @@ class ImageInspection:
             raise ValueError("estimated_peak_bytes must be greater than 0")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class DecodedImage(Generic[FrameT]):
     """A decoded frame and the metadata needed by conversion policy."""
 
@@ -174,7 +174,7 @@ class PillowWebPCodec(WebPCodec[Image.Image]):
         frame.close()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _ConversionCandidate:
     """An inspected source waiting for a memory reservation and worker."""
 
@@ -192,42 +192,21 @@ class WebPDirectoryConverter(Generic[FrameT]):
         codec: WebPCodec[FrameT],
         *,
         scanner: DirectoryScanner | None = None,
-        max_workers: int | None = None,
-        memory_limit_mb: int | None = None,
     ) -> None:
         self._codec = codec
         self._scanner = scanner or ImageDirectoryScanner()
-        self._max_workers = max_workers
-        self._memory_limit_mb = memory_limit_mb
-        if max_workers is not None and max_workers < 1:
-            raise ValueError("max_workers must be greater than 0")
-        if memory_limit_mb is not None and memory_limit_mb < 1:
-            raise ValueError("memory_limit_mb must be greater than 0")
 
     def convert(
         self,
         directory: Path,
-        *,
-        quality: int = 80,
-        replace: bool = False,
-        max_workers: int | None = None,
-        memory_limit_mb: int | None = None,
+        options: WebPOptions | None = None,
     ) -> WebPDirectoryConversionResult:
-        configured_workers = (
-            self._max_workers if max_workers is None else max_workers
-        )
-        configured_memory_limit = (
-            self._memory_limit_mb if memory_limit_mb is None else memory_limit_mb
-        )
-        options = WebPOptions(
-            quality, replace, configured_workers, configured_memory_limit
-        )
+        request = options or WebPOptions()
 
         paths = list(self._scanner.scan(directory))
-        worker_count = options.max_workers or min(32, (os.cpu_count() or 1) + 4)
         memory_limit = (
-            options.memory_limit_mb * _MEBIBYTE
-            if options.memory_limit_mb is not None
+            request.memory_limit_mb * _MEBIBYTE
+            if request.memory_limit_mb is not None
             else _automatic_memory_limit()
         )
 
@@ -256,8 +235,7 @@ class WebPDirectoryConverter(Generic[FrameT]):
         self._convert_candidates(
             candidates,
             ordered_results,
-            options,
-            max_workers=worker_count,
+            request,
             memory_limit=memory_limit,
         )
 
@@ -311,59 +289,24 @@ class WebPDirectoryConverter(Generic[FrameT]):
         ordered_results: list[WebPConversion | WebPSkip | None],
         options: WebPOptions,
         *,
-        max_workers: int,
         memory_limit: int,
     ) -> None:
         """Run candidates while their estimated aggregate memory fits."""
 
-        # Largest-first admission prevents a stream of tiny files from
-        # needlessly delaying the jobs that are hardest to fit. Results are
-        # still placed into scan-order slots.
-        waiting = sorted(
+        def convert(candidate: _ConversionCandidate) -> WebPConversion | WebPSkip | None:
+            return self._convert_file_safely(candidate, options)
+
+        results = weighted_parallel_map(
+            convert,
             candidates,
-            key=lambda candidate: (
-                -candidate.inspection.estimated_peak_bytes,
-                candidate.index,
-            ),
+            weight=lambda candidate: candidate.inspection.estimated_peak_bytes,
+            capacity=memory_limit,
+            max_workers=options.max_workers,
         )
-        pending: dict[Future[WebPConversion | WebPSkip | None], _ConversionCandidate] = {}
-        available = memory_limit
-
-        with (
-            ThreadPoolExecutor(max_workers=max_workers) as executor,
-            tqdm.tqdm(total=len(candidates), desc="converting", unit="file") as progress,
+        for candidate, result in tqdm.tqdm(
+            results, total=len(candidates), desc="converting", unit="file"
         ):
-            while waiting or pending:
-                while len(pending) < max_workers:
-                    next_index = next(
-                        (
-                            index
-                            for index, candidate in enumerate(waiting)
-                            if candidate.inspection.estimated_peak_bytes <= available
-                        ),
-                        None,
-                    )
-                    if next_index is None:
-                        break
-
-                    candidate = waiting.pop(next_index)
-                    required = candidate.inspection.estimated_peak_bytes
-                    available -= required
-                    future = executor.submit(
-                        self._convert_file_safely,
-                        candidate,
-                        options,
-                    )
-                    pending[future] = candidate
-
-                # Every waiting candidate was pre-checked against the complete
-                # budget, so lack of a fit means an active job must finish.
-                completed, _ = wait(pending, return_when=FIRST_COMPLETED)
-                for future in completed:
-                    candidate = pending.pop(future)
-                    available += candidate.inspection.estimated_peak_bytes
-                    ordered_results[candidate.index] = future.result()
-                    progress.update()
+            ordered_results[candidate.index] = result
 
     def _convert_file_safely(
         self,
@@ -487,9 +430,11 @@ def convert_directory_to_webp(
     fits the configured or automatically selected budget.
     """
 
-    converter = WebPDirectoryConverter(
-        PillowWebPCodec(),
+    converter = WebPDirectoryConverter(PillowWebPCodec())
+    options = WebPOptions(
+        quality=quality,
+        replace=replace,
         max_workers=max_workers,
         memory_limit_mb=memory_limit_mb,
     )
-    return converter.convert(Path(directory), quality=quality, replace=replace)
+    return converter.convert(Path(directory), options)

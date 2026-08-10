@@ -14,6 +14,7 @@ from cleanup_cli.models.image_webp import (
     PillowWebPCodec,
     WebPCodec,
     WebPDirectoryConverter,
+    WebPOptions,
 )
 
 
@@ -87,7 +88,7 @@ def test_skips_webp_by_path_before_decoding(tmp_path: Path) -> None:
 
     converter = WebPDirectoryConverter(FailingCodec())
 
-    result = converter.convert(tmp_path, replace=True)
+    result = converter.convert(tmp_path, WebPOptions(replace=True))
     assert result.conversions == ()
     assert result.skips == ()
 
@@ -222,9 +223,10 @@ def test_skips_image_that_cannot_fit_budget_without_decoding(tmp_path: Path) -> 
     source = tmp_path / "oversized.jpg"
     source.write_bytes(b"x" * 100)
 
-    result = WebPDirectoryConverter(
-        OversizedCodec(), memory_limit_mb=1
-    ).convert(tmp_path, replace=True)
+    result = WebPDirectoryConverter(OversizedCodec()).convert(
+        tmp_path,
+        WebPOptions(replace=True, memory_limit_mb=1),
+    )
 
     assert result.conversions == ()
     assert len(result.skips) == 1
@@ -304,9 +306,10 @@ def test_limits_aggregate_conversion_memory_and_keeps_safe_parallelism(
     result = WebPDirectoryConverter(
         BudgetTrackingCodec(),
         scanner=Scanner(sources),
-        max_workers=3,
-        memory_limit_mb=10,
-    ).convert(tmp_path, replace=True)
+    ).convert(
+        tmp_path,
+        WebPOptions(replace=True, max_workers=3, memory_limit_mb=10),
+    )
 
     assert [conversion.source for conversion in result.conversions] == sources
     assert result.skips == ()
@@ -355,11 +358,12 @@ def test_converts_files_in_parallel_and_preserves_scan_order(tmp_path: Path) -> 
         source.write_bytes(b"x" * 100)
         sources.append(source)
 
-    converter = WebPDirectoryConverter(
-        TrackingCodec(), scanner=Scanner(sources), max_workers=4
-    )
+    converter = WebPDirectoryConverter(TrackingCodec(), scanner=Scanner(sources))
 
-    result = converter.convert(tmp_path, replace=True)
+    result = converter.convert(
+        tmp_path,
+        WebPOptions(replace=True, max_workers=4),
+    )
     conversions = result.conversions
     skips = result.skips
 

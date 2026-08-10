@@ -33,7 +33,7 @@ class Controller(ABC, Generic[RequestT, ResultT]):
         """Handle one validated application request."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class DeduplicationRequest:
     """Input passed from a view to the deduplication controller."""
 
@@ -41,7 +41,7 @@ class DeduplicationRequest:
     options: DeduplicationOptions = field(default_factory=DeduplicationOptions)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class DeduplicationResult:
     """View-independent result of a deduplication operation."""
 
@@ -63,7 +63,7 @@ class DeduplicationController(
         return DeduplicationResult(tuple(duplicates), request.options.delete)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class WebPConversionRequest:
     """Input passed from a view to the WebP conversion controller."""
 
@@ -81,10 +81,4 @@ class WebPConversionController(
         self._model = model
 
     def execute(self, request: WebPConversionRequest) -> WebPDirectoryConversionResult:
-        return self._model.convert(
-            request.directory,
-            quality=request.options.quality,
-            replace=request.options.replace,
-            max_workers=request.options.max_workers,
-            memory_limit_mb=request.options.memory_limit_mb,
-        )
+        return self._model.convert(request.directory, request.options)
