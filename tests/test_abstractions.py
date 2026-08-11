@@ -22,10 +22,15 @@ from cleanup_cli import (
     WebPOptions,
 )
 from cleanup_cli.models.abstractions import FileIdentity, file_identity
-from cleanup_cli.models.image_duplicates import FileChangedError, LocalFileRemover
-from cleanup_cli.models.image_duplicates import Duplicate
+from cleanup_cli.models.deduplication import (
+    Duplicate,
+    FileChangedError,
+    LocalFileRemover,
+)
 from cleanup_cli.controllers import core as controller_models
-from cleanup_cli.models import abstractions, image_duplicates, image_webp, parallel
+from cleanup_cli.models import abstractions, parallel
+from cleanup_cli.models.image import duplicates as image_duplicates
+from cleanup_cli.models.image import webp as image_webp
 
 
 class TextLengthAnalyzer:
@@ -324,10 +329,25 @@ def test_local_remover_refuses_to_delete_a_replaced_file(tmp_path: Path) -> None
     assert path.read_bytes() == b"new user data"
 
 
-@pytest.mark.parametrize("threshold", [-1, 257])
-def test_deduplication_options_validate_threshold(threshold: int) -> None:
+def test_deduplication_options_rejects_negative_threshold() -> None:
+    with pytest.raises(ValueError, match="threshold must be at least 0"):
+        DeduplicationOptions(threshold=-1)
+
+
+def test_deduplication_options_accepts_detector_specific_thresholds() -> None:
+    options = DeduplicationOptions(threshold=257)
+
+    assert options.threshold == 257
+
+
+def test_image_detector_rejects_threshold_above_256() -> None:
     with pytest.raises(ValueError, match="between 0 and 256"):
-        DeduplicationOptions(threshold=threshold)
+        image_duplicates.create_image_duplicate_detector().validate_threshold(257)
+
+
+def test_image_detector_rejects_negative_threshold() -> None:
+    with pytest.raises(ValueError, match="between 0 and 256"):
+        image_duplicates.create_image_duplicate_detector().validate_threshold(-1)
 
 
 def test_webp_converter_uses_injected_codec(tmp_path: Path) -> None:

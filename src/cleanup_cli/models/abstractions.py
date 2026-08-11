@@ -12,8 +12,8 @@ from typing import Generic, Protocol, TypeVar
 
 import tqdm
 
-from .image_errors import IMAGE_INPUT_ERRORS
-from .image_memory import MEBIBYTE, automatic_memory_limit
+from .image.errors import IMAGE_INPUT_ERRORS
+from .image.memory import MEBIBYTE, automatic_memory_limit
 from .parallel import ordered_parallel_map, weighted_parallel_map
 from .path_sort import sort_numbered_paths
 from .validation import validate_optional_positive

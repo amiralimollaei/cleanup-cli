@@ -6,9 +6,10 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from cleanup_cli.models import image_memory, image_webp
+from cleanup_cli.models.image import memory as image_memory
+from cleanup_cli.models.image import webp as image_webp
 from cleanup_cli import convert_directory_to_webp
-from cleanup_cli.models.image_webp import (
+from cleanup_cli.models.image.webp import (
     DecodedImage,
     ImageInspection,
     PillowWebPCodec,

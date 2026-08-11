@@ -21,3 +21,10 @@ def validate_optional_positive(name: str, value: int | None) -> None:
 
     if value is not None and value < 1:
         raise ValueError(f"{name} must be greater than 0")
+
+
+def validate_minimum(name: str, value: int, *, minimum: int) -> None:
+    """Require *value* to be greater than or equal to *minimum*."""
+
+    if value < minimum:
+        raise ValueError(f"{name} must be at least {minimum}")

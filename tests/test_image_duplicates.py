@@ -13,13 +13,14 @@ from cleanup_cli import (
     index_images,
     perceptual_hash,
 )
-from cleanup_cli.models import image_duplicates
+from cleanup_cli.models.image import duplicates as image_duplicates
+from cleanup_cli.models.image import signatures as image_signatures
 from cleanup_cli.models.abstractions import (
     DirectoryIndexer,
     IndexedFile,
     file_identity,
 )
-from cleanup_cli.models.image_duplicates import Duplicate
+from cleanup_cli.models.deduplication import Duplicate
 
 
 def _write_pgm(path: Path, pixels: np.ndarray) -> None:
@@ -59,26 +60,26 @@ def test_perceptual_hash_uses_64_pixels_and_256_dct_coefficients(
     source = tmp_path / "source.pgm"
     _write_pgm(source, _pattern(24))
 
-    normalized = image_duplicates._load_normalized(source)
+    normalized = image_signatures._load_normalized(source)
     coefficients = np.zeros((64, 64), dtype=np.float64)
     coefficients[0, 0] = 1
-    monkeypatch.setattr(image_duplicates, "_dct_2d", lambda _: coefficients)
+    monkeypatch.setattr(image_signatures, "_dct_2d", lambda _: coefficients)
 
     assert normalized.grayscale.shape == (64, 64)
-    assert image_duplicates._phash(normalized.grayscale) == 1 << 255
+    assert image_signatures._phash(normalized.grayscale) == 1 << 255
 
 
 def test_numpy_dct_fallback_matches_scipy(monkeypatch: pytest.MonkeyPatch) -> None:
     pixels = _pattern(32).astype(np.float64)
-    assert image_duplicates._scipy_dctn is not None
-    scipy_coefficients = image_duplicates._dct_2d(pixels)
-    scipy_hash = image_duplicates._phash(pixels)
+    assert image_signatures._scipy_dctn is not None
+    scipy_coefficients = image_signatures._dct_2d(pixels)
+    scipy_hash = image_signatures._phash(pixels)
 
-    monkeypatch.setattr(image_duplicates, "_scipy_dctn", None)
-    numpy_coefficients = image_duplicates._dct_2d(pixels)
+    monkeypatch.setattr(image_signatures, "_scipy_dctn", None)
+    numpy_coefficients = image_signatures._dct_2d(pixels)
 
     np.testing.assert_allclose(numpy_coefficients, scipy_coefficients, atol=1e-10)
-    assert image_duplicates._phash(pixels) == scipy_hash
+    assert image_signatures._phash(pixels) == scipy_hash
 
 
 def test_perceptual_hash_survives_resizing(tmp_path: Path) -> None:
@@ -157,7 +158,7 @@ def test_rejects_invalid_threshold_before_indexing(
         raise AssertionError("directory should not be indexed")
 
     monkeypatch.setattr(
-        "cleanup_cli.models.image_duplicates.index_images", unexpected_index
+        "cleanup_cli.models.image.duplicates.index_images", unexpected_index
     )
 
     with pytest.raises(ValueError, match="between 0 and 256"):
@@ -558,7 +559,7 @@ def test_reports_duplicate_after_successful_delete_and_totals_saved_bytes(
         ) -> list[IndexedFile[int]]:
             return indexed
 
-    from cleanup_cli.models.image_duplicates import (
+    from cleanup_cli.models.deduplication import (
         DirectoryDeduplicator,
         LocalFileRemover,
         QualityAwareDuplicateDetector,

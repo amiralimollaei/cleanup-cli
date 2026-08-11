@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TextIO
 
 from ...controllers import Controller, DeduplicationRequest, DeduplicationResult
-from ...models.image_duplicates import DeduplicationOptions, Duplicate
+from ...models.deduplication import DeduplicationOptions, Duplicate
 from .arguments import positive_int
 from .progress import CliProgress
 

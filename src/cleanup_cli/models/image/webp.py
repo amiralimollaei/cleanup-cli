@@ -12,7 +12,7 @@ from typing import Callable, Generic, TypeAlias, TypeVar
 
 from PIL import Image
 
-from .abstractions import (
+from ..abstractions import (
     DirectoryScanner,
     FileIdentity,
     ImageDirectoryScanner,
@@ -22,15 +22,15 @@ from .abstractions import (
     quarantine_if_unchanged,
     track_progress,
 )
-from .image_errors import IMAGE_INPUT_ERRORS
-from .image_memory import (
+from .errors import IMAGE_INPUT_ERRORS
+from .memory import (
     MEBIBYTE,
     automatic_memory_limit,
     estimate_peak_bytes,
     format_mebibytes,
 )
-from .parallel import weighted_parallel_map
-from .validation import validate_inclusive_range, validate_optional_positive
+from ..parallel import weighted_parallel_map
+from ..validation import validate_inclusive_range, validate_optional_positive
 
 
 FrameT = TypeVar("FrameT")

@@ -25,6 +25,8 @@ from ...models import (
     WebPResult,
     WebPSkip,
 )
+from ...models.image.signatures import PHASH_BITS
+from ...models.validation import validate_inclusive_range
 from .application import (
     ControllerGtkTab,
     OptionalNumberControl,
@@ -69,6 +71,12 @@ class DeduplicationGtkTab(
         path_text = str(directory).strip()
         if not path_text:
             raise ValueError("select a directory")
+        validate_inclusive_range(
+            "threshold",
+            threshold,
+            minimum=0,
+            maximum=PHASH_BITS,
+        )
         return DeduplicationRequest(
             Path(path_text).expanduser(),
             DeduplicationOptions(

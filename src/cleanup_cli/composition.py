@@ -5,8 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .controllers import DeduplicationController, WebPConversionController
-from .models.image_duplicates import ImageSignature, create_image_deduplicator
-from .models.image_webp import PillowWebPCodec, WebPDirectoryConverter
+from .models.image.duplicates import create_image_deduplicator
+from .models.image.signatures import ImageSignature
+from .models.image.webp import PillowWebPCodec, WebPDirectoryConverter
 
 
 @dataclass(frozen=True, slots=True)

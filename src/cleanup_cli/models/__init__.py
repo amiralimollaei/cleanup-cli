@@ -1,7 +1,7 @@
 """Domain models and reusable infrastructure abstractions."""
 
 # Configure Pillow before importing any model that opens an image.
-from . import image_limits as _image_limits  # noqa: F401
+from .image import limits as _image_limits  # noqa: F401
 
 from .abstractions import (
     DirectoryIndexCache,
@@ -19,28 +19,32 @@ from .abstractions import (
     RecursiveDirectoryScanner,
     TaskProgress,
 )
-from .image_duplicates import (
+from .deduplication import (
     DeduplicationOptions,
     DirectoryDeduplicator,
     Duplicate,
     DuplicateObserver,
     DuplicateDetector,
     FileRemover,
-    ImageSignature,
-    ImageSignatureCache,
-    ImageSignatureDistance,
     LocalFileRemover,
-    PillowImageSignatureAnalyzer,
     QualityAwareDuplicateDetector,
+)
+from .image.duplicates import (
     create_image_deduplicator,
     deduplicate_directory,
     find_duplicates,
+    index_images,
+)
+from .image.signatures import (
+    ImageSignature,
+    ImageSignatureDistance,
     hamming_distance,
     image_signature,
-    index_images,
     perceptual_hash,
+    PillowImageSignatureAnalyzer,
 )
-from .image_webp import (
+from .image.signature_cache import ImageSignatureCache
+from .image.webp import (
     DecodedImage,
     ImageInspection,
     PillowWebPCodec,

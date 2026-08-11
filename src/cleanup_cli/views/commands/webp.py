@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TextIO
 
 from ...controllers import Controller, WebPConversionRequest
-from ...models.image_webp import (
+from ...models.image.webp import (
     WebPConversion,
     WebPDirectoryConversionResult,
     WebPOptions,

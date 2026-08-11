@@ -8,13 +8,13 @@ from pathlib import Path
 from typing import Generic, TypeVar
 
 from ..models.abstractions import ProgressObserver
-from ..models.image_duplicates import (
+from ..models.deduplication import (
     DeduplicationOptions,
     DirectoryDeduplicator,
     Duplicate,
     DuplicateObserver,
 )
-from ..models.image_webp import (
+from ..models.image.webp import (
     WebPDirectoryConverter,
     WebPDirectoryConversionResult,
     WebPOptions,
