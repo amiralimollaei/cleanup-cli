@@ -21,14 +21,15 @@ from cleanup_cli import (
     WebPDirectoryConverter,
     WebPOptions,
 )
-from cleanup_cli.models.abstractions import FileIdentity, file_identity
+from cleanup_cli.models.filesystem import FileIdentity, file_identity
+from cleanup_cli.models.progress import ProgressObserver
 from cleanup_cli.models.deduplication import (
     Duplicate,
     FileChangedError,
     LocalFileRemover,
 )
 from cleanup_cli.controllers import core as controller_models
-from cleanup_cli.models import abstractions, parallel
+from cleanup_cli.models import abstractions, filesystem, parallel, progress
 from cleanup_cli.models.image import duplicates as image_duplicates
 from cleanup_cli.models.image import webp as image_webp
 
@@ -55,6 +56,7 @@ class StaticIndexer(DirectoryIndexer[int]):
         *,
         max_workers: int | None = None,
         memory_limit_mb: int | None = None,
+        on_progress: ProgressObserver | None = None,
     ) -> list[IndexedFile[int]]:
         return self.files
 
@@ -286,6 +288,26 @@ def test_recursive_indexer_bounds_submitted_work(
     assert executor.maximum_outstanding == 6
 
 
+def test_weighted_parallel_map_evaluates_each_weight_once() -> None:
+    values = [1, 2, 3]
+    calls = {value: 0 for value in values}
+
+    def weight(value: int) -> int:
+        calls[value] += 1
+        return value
+
+    results = parallel.weighted_parallel_map(
+        lambda value: value * 10,
+        values,
+        weight=weight,
+        capacity=6,
+        max_workers=2,
+    )
+
+    assert sorted(results) == [(1, 10), (2, 20), (3, 30)]
+    assert calls == {1: 1, 2: 1, 3: 1}
+
+
 def test_duplicate_detector_uses_injected_generic_distance_metric() -> None:
     images = [
         IndexedFile(Path("1.txt"), 10),
@@ -395,7 +417,14 @@ def test_webp_options_validate_quality(quality: int) -> None:
 
 @pytest.mark.parametrize(
     "module",
-    [controller_models, abstractions, image_duplicates, image_webp],
+    [
+        controller_models,
+        abstractions,
+        filesystem,
+        image_duplicates,
+        image_webp,
+        progress,
+    ],
 )
 def test_production_dataclasses_use_slots(module: ModuleType) -> None:
     dataclasses = [
@@ -418,10 +447,10 @@ def test_no_clobber_copy_fallback_preserves_existing_destination(
     destination = tmp_path / "destination.bin"
     source.write_bytes(b"source")
     destination.write_bytes(b"existing")
-    monkeypatch.setattr(abstractions.os, "link", _unsupported_link)
+    monkeypatch.setattr(filesystem.os, "link", _unsupported_link)
 
     with pytest.raises(FileExistsError):
-        abstractions.hard_link_no_clobber(source, destination)
+        filesystem.hard_link_no_clobber(source, destination)
 
     assert destination.read_bytes() == b"existing"
 

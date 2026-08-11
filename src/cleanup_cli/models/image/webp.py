@@ -12,25 +12,29 @@ from typing import Callable, Generic, TypeAlias, TypeVar
 
 from PIL import Image
 
-from ..abstractions import (
+from cleanup_cli.models.abstractions import (
     DirectoryScanner,
-    FileIdentity,
     ImageDirectoryScanner,
-    ProgressObserver,
+)
+from cleanup_cli.models.filesystem import (
+    FileIdentity,
     file_identity,
     hard_link_no_clobber,
     quarantine_if_unchanged,
-    track_progress,
 )
-from .errors import IMAGE_INPUT_ERRORS
-from .memory import (
+from cleanup_cli.models.image.errors import IMAGE_INPUT_ERRORS
+from cleanup_cli.models.image.memory import (
     MEBIBYTE,
     automatic_memory_limit,
     estimate_peak_bytes,
     format_mebibytes,
 )
-from ..parallel import weighted_parallel_map
-from ..validation import validate_inclusive_range, validate_optional_positive
+from cleanup_cli.models.parallel import weighted_parallel_map
+from cleanup_cli.models.progress import ProgressObserver, track_progress
+from cleanup_cli.models.validation import (
+    validate_inclusive_range,
+    validate_optional_positive,
+)
 
 
 FrameT = TypeVar("FrameT")
@@ -337,7 +341,9 @@ class WebPDirectoryConverter(Generic[FrameT]):
     ) -> None:
         """Run candidates while their estimated aggregate memory fits."""
 
-        def convert(candidate: _ConversionCandidate) -> WebPConversion | WebPSkip | None:
+        def convert(
+            candidate: _ConversionCandidate,
+        ) -> WebPConversion | WebPSkip | None:
             return self._convert_file_safely(candidate, options)
 
         results = weighted_parallel_map(

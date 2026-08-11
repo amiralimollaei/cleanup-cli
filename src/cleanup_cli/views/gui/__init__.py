@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from ...composition import create_cleanup_controllers
-from .application import GtkGuiView, GtkTab
-from .tabs import DeduplicationGtkTab, WebPConversionGtkTab
+from cleanup_cli.composition import create_cleanup_controllers
+from cleanup_cli.views.gui.application import GtkGuiView, GtkTab
+from cleanup_cli.views.gui.tabs import DeduplicationGtkTab, WebPConversionGtkTab
 
 
 def create_gui_view() -> GtkGuiView:

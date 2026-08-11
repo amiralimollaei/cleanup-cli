@@ -7,19 +7,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Generic, TypeVar
 
-from ..models.abstractions import ProgressObserver
-from ..models.deduplication import (
+from cleanup_cli.models.deduplication import (
     DeduplicationOptions,
     DirectoryDeduplicator,
     Duplicate,
     DuplicateObserver,
 )
-from ..models.image.webp import (
+from cleanup_cli.models.image.webp import (
     WebPDirectoryConverter,
     WebPDirectoryConversionResult,
     WebPOptions,
     WebPResultObserver,
 )
+from cleanup_cli.models.progress import ProgressObserver
 
 
 RequestT = TypeVar("RequestT")

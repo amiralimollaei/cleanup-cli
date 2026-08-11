@@ -12,8 +12,8 @@ import gi  # pyright: ignore[reportMissingImports]
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gio, GLib, Gtk, Pango  # noqa: E402  # pyright: ignore[reportMissingImports, reportAttributeAccessIssue]
 
-from ...controllers import Controller
-from ...models import TaskProgress
+from cleanup_cli.controllers.core import Controller
+from cleanup_cli.models.progress import TaskProgress
 
 
 RequestT = TypeVar("RequestT")
@@ -241,7 +241,10 @@ class ControllerGtkTab(Generic[RequestT, ResultT]):
 
     def __init__(self, controller: Controller[RequestT, ResultT]) -> None:
         self._controller = controller
-        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cleanup-gui")
+        self._executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="cleanup-gui",
+        )
         self._form: Gtk.Widget | None = None
         self._run_button: Gtk.Button | None = None
         self._spinner: Gtk.Spinner | None = None

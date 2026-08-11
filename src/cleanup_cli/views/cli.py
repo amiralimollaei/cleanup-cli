@@ -6,8 +6,9 @@ import argparse
 from collections.abc import Sequence
 from typing import Protocol, TextIO
 
-from ..composition import create_cleanup_controllers
-from .commands import DeduplicateCommand, WebPCommand
+from cleanup_cli.composition import create_cleanup_controllers
+from cleanup_cli.views.commands.deduplicate import DeduplicateCommand
+from cleanup_cli.views.commands.webp import WebPCommand
 
 
 class CliView(Protocol):

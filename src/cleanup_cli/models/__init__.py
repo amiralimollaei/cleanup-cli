@@ -1,9 +1,9 @@
 """Domain models and reusable infrastructure abstractions."""
 
 # Configure Pillow before importing any model that opens an image.
-from .image import limits as _image_limits  # noqa: F401
+from cleanup_cli.models.image import limits as _image_limits  # noqa: F401
 
-from .abstractions import (
+from cleanup_cli.models.abstractions import (
     DirectoryIndexCache,
     DirectoryIndexer,
     DirectoryScanner,
@@ -14,12 +14,10 @@ from .abstractions import (
     IndexedFile,
     NaturalPathOrderer,
     PathOrderer,
-    ProgressObserver,
     RecursiveDirectoryIndexer,
     RecursiveDirectoryScanner,
-    TaskProgress,
 )
-from .deduplication import (
+from cleanup_cli.models.deduplication import (
     DeduplicationOptions,
     DirectoryDeduplicator,
     Duplicate,
@@ -29,13 +27,13 @@ from .deduplication import (
     LocalFileRemover,
     QualityAwareDuplicateDetector,
 )
-from .image.duplicates import (
+from cleanup_cli.models.image.duplicates import (
     create_image_deduplicator,
     deduplicate_directory,
     find_duplicates,
     index_images,
 )
-from .image.signatures import (
+from cleanup_cli.models.image.signatures import (
     ImageSignature,
     ImageSignatureDistance,
     hamming_distance,
@@ -43,8 +41,8 @@ from .image.signatures import (
     perceptual_hash,
     PillowImageSignatureAnalyzer,
 )
-from .image.signature_cache import ImageSignatureCache
-from .image.webp import (
+from cleanup_cli.models.image.signature_cache import ImageSignatureCache
+from cleanup_cli.models.image.webp import (
     DecodedImage,
     ImageInspection,
     PillowWebPCodec,
@@ -58,7 +56,8 @@ from .image.webp import (
     WebPSkip,
     convert_directory_to_webp,
 )
-from .path_sort import path_number_key, sort_numbered_paths
+from cleanup_cli.models.path_sort import path_number_key, sort_numbered_paths
+from cleanup_cli.models.progress import ProgressObserver, TaskProgress
 
 __all__ = [
     "DecodedImage",

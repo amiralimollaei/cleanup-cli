@@ -8,7 +8,7 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 import os
 from typing import TypeVar
 
-from .validation import validate_optional_positive
+from cleanup_cli.models.validation import validate_optional_positive
 
 
 InputT = TypeVar("InputT")
@@ -75,16 +75,18 @@ def weighted_parallel_map(
         raise ValueError("capacity must be greater than 0")
 
     workers = worker_count(max_workers)
+    weighted_values: list[tuple[InputT, int]] = []
     for value in values:
         required = weight(value)
         if required < 1:
             raise ValueError("weights must be greater than 0")
         if required > capacity:
             raise ValueError("weights cannot exceed capacity")
+        weighted_values.append((value, required))
 
     # sorted() is stable, so equally weighted inputs retain their input order.
-    waiting = sorted(values, key=weight, reverse=True)
-    pending: dict[Future[ResultT], InputT] = {}
+    waiting = sorted(weighted_values, key=lambda item: item[1], reverse=True)
+    pending: dict[Future[ResultT], tuple[InputT, int]] = {}
     available = capacity
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -93,23 +95,23 @@ def weighted_parallel_map(
                 waiting_position = next(
                     (
                         position
-                        for position, value in enumerate(waiting)
-                        if weight(value) <= available
+                        for position, (_, required) in enumerate(waiting)
+                        if required <= available
                     ),
                     None,
                 )
                 if waiting_position is None:
                     break
 
-                value = waiting.pop(waiting_position)
-                available -= weight(value)
-                pending[executor.submit(function, value)] = value
+                value, required = waiting.pop(waiting_position)
+                available -= required
+                pending[executor.submit(function, value)] = value, required
 
             if not pending:
                 raise RuntimeError("weighted scheduler could not admit pending work")
 
             completed, _ = wait(pending, return_when=FIRST_COMPLETED)
             for future in completed:
-                value = pending.pop(future)
-                available += weight(value)
+                value, required = pending.pop(future)
+                available += required
                 yield value, future.result()

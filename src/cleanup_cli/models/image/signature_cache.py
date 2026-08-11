@@ -10,8 +10,9 @@ import tempfile
 from pathlib import Path
 from typing import TypeGuard
 
-from ..abstractions import FileIdentity, IndexedFile, file_identity
-from .signatures import PHASH_BITS, ImageSignature
+from cleanup_cli.models.abstractions import IndexedFile
+from cleanup_cli.models.filesystem import FileIdentity, file_identity
+from cleanup_cli.models.image.signatures import PHASH_BITS, ImageSignature
 
 
 IMAGE_SIGNATURE_CACHE_VERSION = "phash-256-v1"
@@ -123,7 +124,9 @@ class ImageSignatureCache:
         if cache_directory is None:
             configured = os.environ.get("XDG_CACHE_HOME")
             cache_root = Path(configured) if configured else Path.home() / ".cache"
-            cache_directory = cache_root / "cleanup-cli" / IMAGE_SIGNATURE_CACHE_DIRECTORY
+            cache_directory = (
+                cache_root / "cleanup-cli" / IMAGE_SIGNATURE_CACHE_DIRECTORY
+            )
         key = hashlib.sha256(os.fsencode(root)).hexdigest()
         return cache_directory / f"{key}.json"
 

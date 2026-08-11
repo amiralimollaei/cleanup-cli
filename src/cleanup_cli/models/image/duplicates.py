@@ -7,27 +7,27 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeAlias, TypeVar
 
-from ..abstractions import (
+from cleanup_cli.models.abstractions import (
     ImageDirectoryScanner,
     IndexedFile,
-    ProgressObserver,
     RecursiveDirectoryIndexer,
 )
-from ..deduplication import (
+from cleanup_cli.models.deduplication import (
     DeduplicationOptions,
     DirectoryDeduplicator,
     Duplicate,
     ExhaustiveCandidateIndex,
     QualityAwareDuplicateDetector,
 )
-from .signatures import (
+from cleanup_cli.models.image.signature_cache import ImageSignatureCache
+from cleanup_cli.models.image.signatures import (
     PHASH_BITS,
     ImageSignature,
     ImageSignatureDistance,
     PHashValue,
     PillowImageSignatureAnalyzer,
 )
-from .signature_cache import ImageSignatureCache
+from cleanup_cli.models.progress import ProgressObserver
 
 
 SignatureT = TypeVar("SignatureT")

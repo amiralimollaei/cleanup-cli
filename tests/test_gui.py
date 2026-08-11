@@ -26,7 +26,7 @@ from cleanup_cli.models import (
     WebPOptions,
     WebPSkip,
 )
-from cleanup_cli.models.abstractions import FileIdentity
+from cleanup_cli.models.filesystem import FileIdentity
 from cleanup_cli.views.gui import (
     DeduplicationGtkTab,
     GtkGuiView,

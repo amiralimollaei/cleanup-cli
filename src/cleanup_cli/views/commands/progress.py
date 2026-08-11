@@ -7,7 +7,7 @@ from typing import Protocol, TextIO
 
 import tqdm
 
-from ...models.abstractions import TaskProgress
+from cleanup_cli.models.progress import TaskProgress
 
 
 class _ProgressBar(Protocol):

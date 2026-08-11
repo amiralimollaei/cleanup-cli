@@ -3,147 +3,23 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
-import os
 from pathlib import Path
-import tempfile
 from typing import Generic, Protocol, TypeVar
 
-import tqdm
-
-from .image.errors import IMAGE_INPUT_ERRORS
-from .image.memory import MEBIBYTE, automatic_memory_limit
-from .parallel import ordered_parallel_map, weighted_parallel_map
-from .path_sort import sort_numbered_paths
-from .validation import validate_optional_positive
+from cleanup_cli.models.filesystem import FileIdentity, file_identity
+from cleanup_cli.models.image.errors import IMAGE_INPUT_ERRORS
+from cleanup_cli.models.image.memory import MEBIBYTE, automatic_memory_limit
+from cleanup_cli.models.parallel import ordered_parallel_map, weighted_parallel_map
+from cleanup_cli.models.path_sort import sort_numbered_paths
+from cleanup_cli.models.progress import ProgressObserver, track_progress
+from cleanup_cli.models.validation import validate_optional_positive
 
 
 ValueT = TypeVar("ValueT")
 AnalyzedValueT = TypeVar("AnalyzedValueT", covariant=True)
 MeasuredValueT = TypeVar("MeasuredValueT", contravariant=True)
-
-
-@dataclass(frozen=True, slots=True)
-class FileIdentity:
-    """Metadata identifying the directory entry that was analyzed."""
-
-    device: int
-    inode: int
-    size: int
-    modified_ns: int
-
-
-@dataclass(frozen=True, slots=True)
-class TaskProgress:
-    """Completed work for one phase of a directory task."""
-
-    activity: str
-    completed: int
-    total: int
-
-    def __post_init__(self) -> None:
-        if self.total < 0:
-            raise ValueError("total must not be negative")
-        if not 0 <= self.completed <= self.total:
-            raise ValueError("completed must be between 0 and total")
-
-    @property
-    def fraction(self) -> float:
-        """Return progress as a GTK-compatible value between zero and one."""
-
-        return self.completed / self.total if self.total else 0.0
-
-
-ProgressObserver = Callable[[TaskProgress], None]
-
-
-def track_progress(
-    values: Iterable[ValueT],
-    *,
-    total: int,
-    description: str,
-    unit: str,
-    on_progress: ProgressObserver | None,
-    activity: str | None = None,
-) -> Iterator[ValueT]:
-    """Track an iterable in the console or report it to an external view."""
-
-    if on_progress is None:
-        yield from tqdm.tqdm(values, total=total, desc=description, unit=unit)
-        return
-
-    label = activity or description
-    on_progress(TaskProgress(label, 0, total))
-    for completed, value in enumerate(values, start=1):
-        yield value
-        on_progress(TaskProgress(label, completed, total))
-
-
-def file_identity(path: Path) -> FileIdentity:
-    """Return identity metadata used to reject stale destructive actions."""
-
-    stat = path.stat()
-    return FileIdentity(stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
-
-
-def hard_link_no_clobber(source: Path, destination: Path) -> None:
-    """Make *destination* contain *source*'s data without clobbering it.
-
-    Hard links give an atomic, same-filesystem, no-overwrite publish.  When the
-    platform or filesystem does not provide ``os.link``, fall back to a
-    byte-for-byte copy that likewise refuses to overwrite an existing file.
-
-    Raises ``FileExistsError`` if *destination* already exists.
-    """
-
-    try:
-        os.link(source, destination, follow_symlinks=False)
-    except (AttributeError, NotImplementedError):
-        # os.link is missing or unsupported on this platform.
-        created = False
-        try:
-            with open(source, "rb") as input_stream, open(
-                destination, "xb"
-            ) as output_stream:
-                created = True
-                while chunk := input_stream.read(65536):
-                    output_stream.write(chunk)
-        except BaseException:
-            if created:
-                destination.unlink(missing_ok=True)
-            raise
-
-
-def quarantine_if_unchanged(path: Path, expected: FileIdentity) -> Path:
-    """Atomically move *path* aside and verify it is the analyzed file.
-
-    Moving before checking closes the check/unlink race: even if a writer
-    replaces the pathname at the worst moment, its data is retained either at
-    the original name or at the returned quarantine path.
-    """
-
-    quarantine_directory = Path(
-        tempfile.mkdtemp(dir=path.parent, prefix=f".{path.name}-quarantine-")
-    )
-    quarantine = quarantine_directory / path.name
-    try:
-        os.rename(path, quarantine)
-    except BaseException:
-        quarantine_directory.rmdir()
-        raise
-    if file_identity(quarantine) == expected:
-        return quarantine
-
-    try:
-        hard_link_no_clobber(quarantine, path)
-    except FileExistsError:
-        raise OSError(
-            f"file changed and was preserved at recovery path: {quarantine}"
-        )
-    quarantine.unlink()
-    quarantine_directory.rmdir()
-    raise OSError(f"file changed since it was analyzed: {path}")
 
 
 class FileAnalyzer(Protocol[AnalyzedValueT]):
@@ -273,27 +149,9 @@ class DirectoryIndexer(ABC, Generic[ValueT]):
         *,
         max_workers: int | None = None,
         memory_limit_mb: int | None = None,
-    ) -> list[IndexedFile[ValueT]]:
-        """Return analyzed files from *directory* in a stable order."""
-
-    def index_with_progress(
-        self,
-        directory: Path,
-        *,
-        max_workers: int | None = None,
-        memory_limit_mb: int | None = None,
         on_progress: ProgressObserver | None = None,
     ) -> list[IndexedFile[ValueT]]:
-        """Index files, allowing implementations to expose phase progress.
-
-        Existing indexers remain compatible by ignoring the optional observer.
-        """
-
-        return self.index(
-            directory,
-            max_workers=max_workers,
-            memory_limit_mb=memory_limit_mb,
-        )
+        """Return analyzed files from *directory* in a stable order."""
 
 
 class NaturalPathOrderer:
@@ -424,21 +282,6 @@ class RecursiveDirectoryIndexer(DirectoryIndexer[ValueT]):
         if self._cache is not None:
             self._cache.save(directory, indexed)
         return indexed
-
-    def index_with_progress(
-        self,
-        directory: Path,
-        *,
-        max_workers: int | None = None,
-        memory_limit_mb: int | None = None,
-        on_progress: ProgressObserver | None = None,
-    ) -> list[IndexedFile[ValueT]]:
-        return self.index(
-            directory,
-            max_workers=max_workers,
-            memory_limit_mb=memory_limit_mb,
-            on_progress=on_progress,
-        )
 
     def _index_with_memory_limit(
         self,

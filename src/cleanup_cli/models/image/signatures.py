@@ -17,7 +17,7 @@ try:
 except ImportError:  # pragma: no cover - exercised by forcing the fallback
     _scipy_dctn = None
 
-from .memory import estimate_peak_bytes
+from cleanup_cli.models.image.memory import estimate_peak_bytes
 
 
 PHASH_SIZE = 64

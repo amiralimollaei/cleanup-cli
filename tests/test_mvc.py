@@ -24,7 +24,8 @@ from cleanup_cli.models import (
     WebPOptions,
     WebPSkip,
 )
-from cleanup_cli.models.abstractions import FileIdentity, TaskProgress
+from cleanup_cli.models.filesystem import FileIdentity
+from cleanup_cli.models.progress import ProgressObserver, TaskProgress
 from cleanup_cli.views import ArgparseCliView
 from cleanup_cli.views.commands import DeduplicateCommand, WebPCommand
 from cleanup_cli.views.commands import progress as cli_progress
@@ -51,6 +52,7 @@ class StaticIndexer(DirectoryIndexer[int]):
         *,
         max_workers: int | None = None,
         memory_limit_mb: int | None = None,
+        on_progress: ProgressObserver | None = None,
     ) -> list[IndexedFile[int]]:
         return [
             IndexedFile(directory / "1.jpg", 1),

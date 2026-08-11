@@ -1,6 +1,6 @@
 """Application controller contracts and implementations."""
 
-from .core import (
+from cleanup_cli.controllers.core import (
     Controller,
     DeduplicationController,
     DeduplicationRequest,

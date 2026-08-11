@@ -8,17 +8,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Generic, Protocol, TypeAlias, TypeVar
 
-from .abstractions import (
+from cleanup_cli.models.abstractions import (
     DirectoryIndexer,
     DistanceMetric,
-    FileIdentity,
     IndexedFile,
     MeasuredValueT,
-    ProgressObserver,
+)
+from cleanup_cli.models.filesystem import (
+    FileIdentity,
     file_identity,
     quarantine_if_unchanged,
 )
-from .validation import (
+from cleanup_cli.models.progress import ProgressObserver
+from cleanup_cli.models.validation import (
     validate_inclusive_range,
     validate_minimum,
     validate_optional_positive,
@@ -243,19 +245,12 @@ class DirectoryDeduplicator(Generic[SignatureT]):
     ) -> list[Duplicate]:
         request = options or DeduplicationOptions()
         self._detector.validate_threshold(request.threshold)
-        if on_progress is None:
-            files = self._indexer.index(
-                directory,
-                max_workers=request.max_workers,
-                memory_limit_mb=request.memory_limit_mb,
-            )
-        else:
-            files = self._indexer.index_with_progress(
-                directory,
-                max_workers=request.max_workers,
-                memory_limit_mb=request.memory_limit_mb,
-                on_progress=on_progress,
-            )
+        files = self._indexer.index(
+            directory,
+            max_workers=request.max_workers,
+            memory_limit_mb=request.memory_limit_mb,
+            on_progress=on_progress,
+        )
         reported: dict[Path, Duplicate] = {}
 
         def handle(duplicate: Duplicate) -> None:

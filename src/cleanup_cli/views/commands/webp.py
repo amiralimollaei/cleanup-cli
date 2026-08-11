@@ -6,16 +6,16 @@ import argparse
 from pathlib import Path
 from typing import TextIO
 
-from ...controllers import Controller, WebPConversionRequest
-from ...models.image.webp import (
+from cleanup_cli.controllers.core import Controller, WebPConversionRequest
+from cleanup_cli.models.image.webp import (
     WebPConversion,
     WebPDirectoryConversionResult,
     WebPOptions,
     WebPResult,
     WebPSkip,
 )
-from .arguments import positive_int
-from .progress import CliProgress
+from cleanup_cli.views.commands.arguments import positive_int
+from cleanup_cli.views.commands.progress import CliProgress
 
 
 class WebPCommand:

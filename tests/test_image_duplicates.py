@@ -18,9 +18,10 @@ from cleanup_cli.models.image import signatures as image_signatures
 from cleanup_cli.models.abstractions import (
     DirectoryIndexer,
     IndexedFile,
-    file_identity,
 )
 from cleanup_cli.models.deduplication import Duplicate
+from cleanup_cli.models.filesystem import file_identity
+from cleanup_cli.models.progress import ProgressObserver
 
 
 def _write_pgm(path: Path, pixels: np.ndarray) -> None:
@@ -515,6 +516,7 @@ def test_dry_run_keeps_files_and_delete_removes_only_earlier_match(
             *,
             max_workers: int | None = None,
             memory_limit_mb: int | None = None,
+            on_progress: ProgressObserver | None = None,
         ) -> list[IndexedFile[int]]:
             return self._images
 
@@ -556,6 +558,7 @@ def test_reports_duplicate_after_successful_delete_and_totals_saved_bytes(
             *,
             max_workers: int | None = None,
             memory_limit_mb: int | None = None,
+            on_progress: ProgressObserver | None = None,
         ) -> list[IndexedFile[int]]:
             return indexed
 

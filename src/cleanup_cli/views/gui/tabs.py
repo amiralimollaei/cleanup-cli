@@ -10,24 +10,23 @@ import gi  # pyright: ignore[reportMissingImports]
 gi.require_version("Gtk", "4.0")
 from gi.repository import GLib, Gtk  # noqa: E402  # pyright: ignore[reportMissingImports, reportAttributeAccessIssue]
 
-from ...controllers import (
+from cleanup_cli.controllers.core import (
     Controller,
     DeduplicationRequest,
     DeduplicationResult,
     WebPConversionRequest,
 )
-from ...models import (
-    DeduplicationOptions,
-    Duplicate,
+from cleanup_cli.models.deduplication import DeduplicationOptions, Duplicate
+from cleanup_cli.models.image.signatures import PHASH_BITS
+from cleanup_cli.models.image.webp import (
     WebPConversion,
     WebPDirectoryConversionResult,
     WebPOptions,
     WebPResult,
     WebPSkip,
 )
-from ...models.image.signatures import PHASH_BITS
-from ...models.validation import validate_inclusive_range
-from .application import (
+from cleanup_cli.models.validation import validate_inclusive_range
+from cleanup_cli.views.gui.application import (
     ControllerGtkTab,
     OptionalNumberControl,
     add_form_row,

@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .controllers import DeduplicationController, WebPConversionController
-from .models.image.duplicates import create_image_deduplicator
-from .models.image.signatures import ImageSignature
-from .models.image.webp import PillowWebPCodec, WebPDirectoryConverter
+from cleanup_cli.controllers.core import (
+    DeduplicationController,
+    WebPConversionController,
+)
+from cleanup_cli.models.image.duplicates import create_image_deduplicator
+from cleanup_cli.models.image.signatures import ImageSignature
+from cleanup_cli.models.image.webp import PillowWebPCodec, WebPDirectoryConverter
 
 
 @dataclass(frozen=True, slots=True)

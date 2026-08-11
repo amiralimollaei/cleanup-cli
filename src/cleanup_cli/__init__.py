@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 
-from .models import (
+from cleanup_cli.models import (
     DecodedImage,
     DeduplicationOptions,
     DirectoryDeduplicator,
@@ -48,7 +48,7 @@ from .models import (
     perceptual_hash,
     sort_numbered_paths,
 )
-from .controllers import (
+from cleanup_cli.controllers import (
     Controller,
     DeduplicationController,
     DeduplicationRequest,
@@ -56,7 +56,12 @@ from .controllers import (
     WebPConversionController,
     WebPConversionRequest,
 )
-from .views import ArgparseCliView, ArgparseSubcommand, CliView, create_cli_view
+from cleanup_cli.views import (
+    ArgparseCliView,
+    ArgparseSubcommand,
+    CliView,
+    create_cli_view,
+)
 
 
 __all__ = [

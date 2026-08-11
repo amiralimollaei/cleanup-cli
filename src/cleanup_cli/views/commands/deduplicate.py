@@ -6,10 +6,14 @@ import argparse
 from pathlib import Path
 from typing import TextIO
 
-from ...controllers import Controller, DeduplicationRequest, DeduplicationResult
-from ...models.deduplication import DeduplicationOptions, Duplicate
-from .arguments import positive_int
-from .progress import CliProgress
+from cleanup_cli.controllers.core import (
+    Controller,
+    DeduplicationRequest,
+    DeduplicationResult,
+)
+from cleanup_cli.models.deduplication import DeduplicationOptions, Duplicate
+from cleanup_cli.views.commands.arguments import positive_int
+from cleanup_cli.views.commands.progress import CliProgress
 
 
 class DeduplicateCommand:
