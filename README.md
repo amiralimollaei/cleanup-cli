@@ -152,7 +152,8 @@ memory budget may select fewer workers for large images.
 ## Removing duplicate images
 
 `cleanup-cli` recursively scans a directory, decodes images with Pillow, and
-computes a 64-bit perceptual hash (pHash) using a NumPy DCT. A normalized RGB
+computes a 256-bit perceptual hash (pHash) from the 16-by-16 low-frequency
+corner of a DCT over a 64-by-64 normalized image. A normalized RGB
 color signature is also checked because grayscale pHash alone cannot detect a
 uniform color shift. Files that Pillow cannot decode as images are ignored.
 Paths are naturally sorted using the rules below. Among matching images, the
@@ -179,6 +180,15 @@ Images whose individual estimates exceed the budget are ignored without being
 decoded. `--max-workers` remains an upper bound on hashing concurrency, while
 the memory budget may allow fewer workers for large images.
 
+Successful image signatures are cached in
+`$XDG_CACHE_HOME/cleanup-cli/image-signatures/`. If `XDG_CACHE_HOME` is not
+set, the cache is stored in `~/.cache/cleanup-cli/image-signatures/`. Each
+scanned directory gets a JSON file named from the SHA-256 hash of its resolved
+path. On later runs, an image is decoded again only when its device, inode,
+size, or nanosecond modification time has changed. Cache data from an older
+signature algorithm is ignored automatically. The cache directory can be
+deleted at any time; it will be rebuilt on the next scan.
+
 Use `--delete` to remove the duplicates reported by the dry run:
 
 ```console
@@ -191,17 +201,17 @@ command may still complete partially if an I/O error occurs; inspect its output
 and keep backups because `--delete` has no undo.
 
 The threshold is the maximum normalized structural or color distance. The
-structural value is the Hamming distance between two 64-bit pHashes; average
-RGB channel differences are mapped to the same 0 through 64 range. `0`
+structural value is the Hamming distance between two 256-bit pHashes; average
+RGB channel differences are mapped to the same 0 through 256 range. `0`
 requires equal structural and color signatures; larger values tolerate more
 visual change. A conservative starting point for resized or re-encoded copies
-is 4:
+is 16:
 
 ```console
-cleanup-cli deduplicate /path/to/photos --threshold 4
+cleanup-cli deduplicate /path/to/photos --threshold 16
 ```
 
-The accepted range is 0 through 64. Perceptual hashes describe low-frequency
+The accepted range is 0 through 256. Perceptual hashes describe low-frequency
 image structure, not byte equality. Higher thresholds increase both tolerance
 and the chance of grouping distinct images, so review the dry-run output
 before using `--delete`.

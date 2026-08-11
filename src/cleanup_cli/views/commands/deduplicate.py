@@ -39,7 +39,7 @@ class DeduplicateCommand:
             type=int,
             default=0,
             metavar="BITS",
-            help="maximum structural/color distance from 0 to 64 (default: 0)",
+            help="maximum structural/color distance from 0 to 256 (default: 0)",
         )
         parser.add_argument(
             "--delete",

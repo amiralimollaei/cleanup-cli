@@ -324,9 +324,9 @@ def test_local_remover_refuses_to_delete_a_replaced_file(tmp_path: Path) -> None
     assert path.read_bytes() == b"new user data"
 
 
-@pytest.mark.parametrize("threshold", [-1, 65])
+@pytest.mark.parametrize("threshold", [-1, 257])
 def test_deduplication_options_validate_threshold(threshold: int) -> None:
-    with pytest.raises(ValueError, match="between 0 and 64"):
+    with pytest.raises(ValueError, match="between 0 and 256"):
         DeduplicationOptions(threshold=threshold)
 
 

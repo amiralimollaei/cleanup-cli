@@ -6,7 +6,11 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
+import hashlib
+import json
+import os
 from pathlib import Path
+import tempfile
 from typing import Callable, Generic, Protocol, TypeAlias, TypeVar
 import warnings
 
@@ -35,9 +39,11 @@ from .image_memory import estimate_peak_bytes
 from .validation import validate_inclusive_range, validate_optional_positive
 
 
-PHASH_SIZE = 32
-PHASH_LOW_FREQUENCIES = 8
+PHASH_SIZE = 64
+PHASH_LOW_FREQUENCIES = 16
 PHASH_BITS = PHASH_LOW_FREQUENCIES**2
+IMAGE_SIGNATURE_CACHE_VERSION = "phash-256-v1"
+IMAGE_SIGNATURE_CACHE_DIRECTORY = "image-signatures"
 SignatureT = TypeVar("SignatureT")
 
 
@@ -172,7 +178,7 @@ def _phash(pixels: NDArray[np.float64]) -> int:
 
 
 def perceptual_hash(path: str | Path) -> int:
-    """Calculate a 64-bit pHash for an image decoded with Pillow."""
+    """Calculate a 256-bit pHash for an image decoded with Pillow."""
 
     return _phash(_load_normalized(Path(path)).grayscale)
 
@@ -206,6 +212,168 @@ class PillowImageSignatureAnalyzer:
         return image_signature(path)
 
 
+class ImageSignatureCache:
+    """Best-effort persistent cache for directory image signatures."""
+
+    def __init__(self, cache_directory: Path | None = None) -> None:
+        self._cache_directory = cache_directory
+
+    def load(
+        self, directory: Path, paths: Sequence[Path]
+    ) -> dict[Path, IndexedFile[ImageSignature]]:
+        try:
+            root = directory.resolve()
+            payload = json.loads(self._cache_path(root).read_text(encoding="utf-8"))
+        except (OSError, RuntimeError, UnicodeError, json.JSONDecodeError):
+            return {}
+
+        if (
+            not isinstance(payload, dict)
+            or payload.get("version") != IMAGE_SIGNATURE_CACHE_VERSION
+            or payload.get("directory") != str(root)
+            or not isinstance(payload.get("entries"), list)
+        ):
+            return {}
+
+        current_paths: dict[str, Path] = {}
+        for path in paths:
+            try:
+                current_paths[path.relative_to(directory).as_posix()] = path
+            except ValueError:
+                continue
+
+        loaded: dict[Path, IndexedFile[ImageSignature]] = {}
+        for raw_entry in payload["entries"]:
+            entry = self._decode_entry(raw_entry)
+            if entry is None:
+                continue
+            relative_path, identity, signature = entry
+            path = current_paths.get(relative_path)
+            if path is None:
+                continue
+            try:
+                if file_identity(path) != identity:
+                    continue
+            except OSError:
+                continue
+            loaded[path] = IndexedFile(path, signature, identity)
+        return loaded
+
+    def save(
+        self,
+        directory: Path,
+        indexed: Sequence[IndexedFile[ImageSignature]],
+    ) -> None:
+        temporary_path: Path | None = None
+        try:
+            root = directory.resolve()
+            cache_path = self._cache_path(root)
+            cache_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            entries = []
+            for item in indexed:
+                if item.identity is None:
+                    continue
+                entries.append(
+                    self._encode_entry(
+                        item.path.relative_to(directory).as_posix(),
+                        item.identity,
+                        item.value,
+                    )
+                )
+            payload = {
+                "version": IMAGE_SIGNATURE_CACHE_VERSION,
+                "directory": str(root),
+                "entries": entries,
+            }
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=cache_path.parent,
+                prefix=f".{cache_path.name}.",
+                delete=False,
+            ) as cache_file:
+                temporary_path = Path(cache_file.name)
+                json.dump(payload, cache_file, separators=(",", ":"), sort_keys=True)
+            os.replace(temporary_path, cache_path)
+            temporary_path = None
+        except (OSError, RuntimeError, TypeError, ValueError):
+            pass
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+
+    def _cache_path(self, root: Path) -> Path:
+        cache_directory = self._cache_directory
+        if cache_directory is None:
+            configured = os.environ.get("XDG_CACHE_HOME")
+            cache_directory = (
+                Path(configured) if configured else Path.home() / ".cache"
+            ) / "cleanup-cli" / IMAGE_SIGNATURE_CACHE_DIRECTORY
+        key = hashlib.sha256(os.fsencode(root)).hexdigest()
+        return cache_directory / f"{key}.json"
+
+    @staticmethod
+    def _encode_entry(
+        relative_path: str,
+        identity: FileIdentity,
+        signature: ImageSignature,
+    ) -> dict[str, object]:
+        return {
+            "path": relative_path,
+            "identity": [
+                identity.device,
+                identity.inode,
+                identity.size,
+                identity.modified_ns,
+            ],
+            "phash": f"{signature.phash:064x}",
+            "average_rgb": list(signature.average_rgb),
+            "resolution": list(signature.resolution),
+        }
+
+    @staticmethod
+    def _decode_entry(
+        raw_entry: object,
+    ) -> tuple[str, FileIdentity, ImageSignature] | None:
+        if not isinstance(raw_entry, dict):
+            return None
+        relative_path = raw_entry.get("path")
+        raw_identity = raw_entry.get("identity")
+        raw_phash = raw_entry.get("phash")
+        raw_rgb = raw_entry.get("average_rgb")
+        raw_resolution = raw_entry.get("resolution")
+        if (
+            not isinstance(relative_path, str)
+            or not isinstance(raw_identity, list)
+            or len(raw_identity) != 4
+            or not all(type(value) is int for value in raw_identity)
+            or not isinstance(raw_phash, str)
+            or len(raw_phash) != PHASH_BITS // 4
+            or not isinstance(raw_rgb, list)
+            or len(raw_rgb) != 3
+            or not all(type(value) is int and 0 <= value <= 255 for value in raw_rgb)
+            or not isinstance(raw_resolution, list)
+            or len(raw_resolution) != 2
+            or not all(
+                type(value) is int and value >= 0 for value in raw_resolution
+            )
+        ):
+            return None
+        try:
+            phash = int(raw_phash, 16)
+        except ValueError:
+            return None
+        if phash < 0 or phash >= 1 << PHASH_BITS:
+            return None
+        identity = FileIdentity(*raw_identity)
+        signature = ImageSignature(
+            phash,
+            (raw_rgb[0], raw_rgb[1], raw_rgb[2]),
+            (raw_resolution[0], raw_resolution[1]),
+        )
+        return relative_path, identity, signature
+
+
 def hamming_distance(left: int, right: int) -> int:
     """Return the number of differing bits in two pHashes."""
 
@@ -219,7 +387,7 @@ def _signature_distance(left: PHashValue, right: PHashValue) -> int:
         raise TypeError("cannot compare a pHash with an image signature")
 
     structure = hamming_distance(left.phash, right.phash)
-    # Map the largest 8-bit channel difference onto the pHash's 0..64 scale.
+    # Map the largest 8-bit channel difference onto the pHash distance scale.
     color = round(
         max(abs(a - b) for a, b in zip(left.average_rgb, right.average_rgb))
         * PHASH_BITS
@@ -305,11 +473,11 @@ class ExhaustiveCandidateIndex:
 class BandedPHashIndex:
     """Prune comparisons by splitting a pHash into exact-match bands.
 
-    Two 64-bit hashes within *threshold* bits must share at least one of
+    Two 256-bit hashes within *threshold* bits must share at least one of
     ``threshold + 1`` bands. At threshold zero, the whole hash is one band and
     this becomes direct hash grouping. The index is conservative and therefore
     produces the same retained set as an exhaustive scan. A threshold covering
-    all 64 bits uses an exhaustive range directly because no pruning is
+    all 256 bits uses an exhaustive range directly because no pruning is
     possible.
     """
 
@@ -571,6 +739,7 @@ def index_images(
         analyzer,
         scanner=ImageDirectoryScanner(),
         memory_estimator=analyzer,
+        cache=ImageSignatureCache(),
     )
     return [
         (image.path, image.value)
@@ -591,6 +760,7 @@ def create_image_deduplicator() -> DirectoryDeduplicator[ImageSignature]:
         analyzer,
         scanner=ImageDirectoryScanner(),
         memory_estimator=analyzer,
+        cache=ImageSignatureCache(),
     )
     detector = QualityAwareDuplicateDetector[ImageSignature](
         ImageSignatureDistance(),

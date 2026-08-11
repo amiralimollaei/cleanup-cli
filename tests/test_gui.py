@@ -120,7 +120,7 @@ def test_deduplication_gui_request_validation_and_options() -> None:
     with pytest.raises(ValueError, match="select a directory"):
         DeduplicationGtkTab.create_request("   ")
     with pytest.raises(ValueError, match="threshold must be between"):
-        DeduplicationGtkTab.create_request("/photos", threshold=65)
+        DeduplicationGtkTab.create_request("/photos", threshold=257)
 
 
 def test_webp_gui_request_validation_and_options() -> None:

@@ -101,7 +101,7 @@ class DeduplicationGtkTab(
         directory_box.append(browse)
         add_form_row(grid, 0, "Directory", directory_box)
 
-        threshold = Gtk.SpinButton.new_with_range(0, 64, 1)
+        threshold = Gtk.SpinButton.new_with_range(0, 256, 1)
         threshold.set_value(0)
         threshold.set_numeric(True)
         self._threshold = threshold

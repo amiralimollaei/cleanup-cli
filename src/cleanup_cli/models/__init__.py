@@ -4,6 +4,7 @@
 from . import image_limits as _image_limits  # noqa: F401
 
 from .abstractions import (
+    DirectoryIndexCache,
     DirectoryIndexer,
     DirectoryScanner,
     DistanceMetric,
@@ -26,6 +27,7 @@ from .image_duplicates import (
     DuplicateDetector,
     FileRemover,
     ImageSignature,
+    ImageSignatureCache,
     ImageSignatureDistance,
     LocalFileRemover,
     PillowImageSignatureAnalyzer,
@@ -58,6 +60,7 @@ __all__ = [
     "DecodedImage",
     "DeduplicationOptions",
     "DirectoryDeduplicator",
+    "DirectoryIndexCache",
     "DirectoryIndexer",
     "DirectoryScanner",
     "DistanceMetric",
@@ -70,6 +73,7 @@ __all__ = [
     "ImageDirectoryScanner",
     "ImageInspection",
     "ImageSignature",
+    "ImageSignatureCache",
     "ImageSignatureDistance",
     "IndexedFile",
     "LocalFileRemover",

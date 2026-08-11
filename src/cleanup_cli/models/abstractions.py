@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
@@ -247,6 +247,22 @@ class IndexedFile(Generic[ValueT]):
     identity: FileIdentity | None = field(default=None, compare=False)
 
 
+class DirectoryIndexCache(Protocol[ValueT]):
+    """Persist analyzed files and reload entries whose identities still match."""
+
+    def load(
+        self, directory: Path, paths: Sequence[Path]
+    ) -> dict[Path, IndexedFile[ValueT]]:
+        """Return valid cached entries for the currently scanned paths."""
+        ...
+
+    def save(
+        self, directory: Path, indexed: Sequence[IndexedFile[ValueT]]
+    ) -> None:
+        """Persist the successful results for the current directory scan."""
+        ...
+
+
 class DirectoryIndexer(ABC, Generic[ValueT]):
     """Abstract source of analyzed files from a directory."""
 
@@ -341,6 +357,7 @@ class RecursiveDirectoryIndexer(DirectoryIndexer[ValueT]):
         scanner: DirectoryScanner | None = None,
         orderer: PathOrderer | None = None,
         memory_estimator: FileMemoryEstimator | None = None,
+        cache: DirectoryIndexCache[ValueT] | None = None,
         ignored_errors: tuple[type[Exception], ...] = IMAGE_INPUT_ERRORS,
     ) -> None:
         self._analyzer = analyzer
@@ -348,6 +365,7 @@ class RecursiveDirectoryIndexer(DirectoryIndexer[ValueT]):
             raise ValueError("scanner and orderer cannot both be provided")
         self._scanner = scanner or RecursiveDirectoryScanner(orderer)
         self._memory_estimator = memory_estimator
+        self._cache = cache
         self._ignored_errors = ignored_errors
 
     def index(
@@ -362,9 +380,15 @@ class RecursiveDirectoryIndexer(DirectoryIndexer[ValueT]):
         validate_optional_positive("memory_limit_mb", memory_limit_mb)
 
         paths = list(self._scanner.scan(directory))
+        cached: dict[Path, IndexedFile[ValueT]] = {}
+        paths_to_index = paths
+        if self._cache is not None:
+            cached = self._cache.load(directory, paths)
+            paths_to_index = [path for path in paths if path not in cached]
+
         if self._memory_estimator is not None:
-            return self._index_with_memory_limit(
-                paths,
+            analyzed = self._index_with_memory_limit(
+                paths_to_index,
                 max_workers=max_workers,
                 memory_limit=(
                     memory_limit_mb * MEBIBYTE
@@ -373,23 +397,32 @@ class RecursiveDirectoryIndexer(DirectoryIndexer[ValueT]):
                 ),
                 on_progress=on_progress,
             )
+        else:
+            analyzed = []
+            results = ordered_parallel_map(
+                self._index_file_safely,
+                paths_to_index,
+                max_workers=max_workers,
+            )
+            for result in track_progress(
+                results,
+                total=len(paths_to_index),
+                description=f"indexing {directory}",
+                unit="file",
+                on_progress=on_progress,
+                activity="Indexing images",
+            ):
+                if result is not None:
+                    analyzed.append(result)
 
+        analyzed_by_path = {item.path: item for item in analyzed}
         indexed: list[IndexedFile[ValueT]] = []
-        results = ordered_parallel_map(
-            self._index_file_safely,
-            paths,
-            max_workers=max_workers,
-        )
-        for result in track_progress(
-            results,
-            total=len(paths),
-            description=f"indexing {directory}",
-            unit="file",
-            on_progress=on_progress,
-            activity="Indexing images",
-        ):
-            if result is not None:
-                indexed.append(result)
+        for path in paths:
+            item = cached.get(path) or analyzed_by_path.get(path)
+            if item is not None:
+                indexed.append(item)
+        if self._cache is not None:
+            self._cache.save(directory, indexed)
         return indexed
 
     def index_with_progress(

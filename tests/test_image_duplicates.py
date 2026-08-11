@@ -38,6 +38,11 @@ def _pattern(size: int) -> np.ndarray:
     return ((x * 7 + y * 3 + (x > y) * 80) % 256).astype(np.uint8)
 
 
+def _random_phashes(count: int, seed: int) -> list[int]:
+    rng = np.random.default_rng(seed)
+    return [int.from_bytes(rng.bytes(32), "big") for _ in range(count)]
+
+
 def test_perceptual_hash_is_stable_for_same_decoded_pixels(tmp_path: Path) -> None:
     first = tmp_path / "first.pgm"
     second = tmp_path / "second.pgm"
@@ -46,6 +51,21 @@ def test_perceptual_hash_is_stable_for_same_decoded_pixels(tmp_path: Path) -> No
     _write_pgm(second, pixels)
 
     assert perceptual_hash(first) == perceptual_hash(second)
+
+
+def test_perceptual_hash_uses_64_pixels_and_256_dct_coefficients(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.pgm"
+    _write_pgm(source, _pattern(24))
+
+    normalized = image_duplicates._load_normalized(source)
+    coefficients = np.zeros((64, 64), dtype=np.float64)
+    coefficients[0, 0] = 1
+    monkeypatch.setattr(image_duplicates, "_dct_2d", lambda _: coefficients)
+
+    assert normalized.grayscale.shape == (64, 64)
+    assert image_duplicates._phash(normalized.grayscale) == 1 << 255
 
 
 def test_numpy_dct_fallback_matches_scipy(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -68,15 +88,15 @@ def test_perceptual_hash_survives_resizing(tmp_path: Path) -> None:
     _write_pgm(small, pixels)
     _write_pgm(large, np.repeat(np.repeat(pixels, 2, axis=0), 2, axis=1))
 
-    assert hamming_distance(perceptual_hash(small), perceptual_hash(large)) <= 4
+    assert hamming_distance(perceptual_hash(small), perceptual_hash(large)) <= 16
     duplicates = find_duplicates(
         [(small, image_signature(small)), (large, image_signature(large))],
-        threshold=4,
+        threshold=16,
     )
     assert len(duplicates) == 1
     assert duplicates[0].removed == small
     assert duplicates[0].kept == large
-    assert duplicates[0].distance <= 4
+    assert duplicates[0].distance <= 16
 
 
 def test_signature_rejects_color_shift_at_strict_threshold(tmp_path: Path) -> None:
@@ -124,9 +144,9 @@ def test_threshold_controls_duplicate_matching() -> None:
     ]
 
 
-@pytest.mark.parametrize("threshold", [-1, 65])
+@pytest.mark.parametrize("threshold", [-1, 257])
 def test_rejects_invalid_threshold(threshold: int) -> None:
-    with pytest.raises(ValueError, match="between 0 and 64"):
+    with pytest.raises(ValueError, match="between 0 and 256"):
         find_duplicates([], threshold)
 
 
@@ -140,8 +160,8 @@ def test_rejects_invalid_threshold_before_indexing(
         "cleanup_cli.models.image_duplicates.index_images", unexpected_index
     )
 
-    with pytest.raises(ValueError, match="between 0 and 64"):
-        deduplicate_directory(tmp_path, threshold=65)
+    with pytest.raises(ValueError, match="between 0 and 256"):
+        deduplicate_directory(tmp_path, threshold=257)
 
 
 def test_keeps_last_sorted_image_without_transitive_matching() -> None:
@@ -156,12 +176,11 @@ def test_keeps_last_sorted_image_without_transitive_matching() -> None:
     ]
 
 
-@pytest.mark.parametrize("threshold", [0, 1, 4, 16, 63, 64])
+@pytest.mark.parametrize("threshold", [0, 1, 4, 16, 255, 256])
 def test_banded_index_matches_exhaustive_detection(threshold: int) -> None:
-    rng = np.random.default_rng(12345)
-    values = [int(value) for value in rng.integers(0, 2**64, size=200, dtype=np.uint64)]
+    values = _random_phashes(200, 12345)
     # Include exact and near duplicates alongside mostly unique hashes.
-    values.extend((values[10], values[20] ^ 0b1111, values[30] ^ ((1 << 63) - 1)))
+    values.extend((values[10], values[20] ^ 0b1111, values[30] ^ ((1 << 255) - 1)))
     images: list[IndexedFile[int | image_duplicates.ImageSignature]] = [
         IndexedFile(Path(f"{position}.png"), value)
         for position, value in enumerate(values)
@@ -249,10 +268,9 @@ def test_low_threshold_limits_comparisons_for_mostly_unique_hashes() -> None:
             self.calls += 1
             return super().distance(left, right)
 
-    rng = np.random.default_rng(54321)
-    values = rng.integers(0, 2**64, size=5_000, dtype=np.uint64)
+    values = _random_phashes(5_000, 54321)
     images: list[IndexedFile[int | image_duplicates.ImageSignature]] = [
-        IndexedFile(Path(f"{rank}.png"), int(value))
+        IndexedFile(Path(f"{rank}.png"), value)
         for rank, value in enumerate(values)
     ]
     metric = CountingDistance()
@@ -265,7 +283,7 @@ def test_low_threshold_limits_comparisons_for_mostly_unique_hashes() -> None:
 
 
 def test_maximum_threshold_uses_exhaustive_candidate_range() -> None:
-    index = image_duplicates.BandedPHashIndex(threshold=64)
+    index = image_duplicates.BandedPHashIndex(threshold=256)
     for rank in range(10):
         index.add(rank, rank)
 
@@ -334,6 +352,103 @@ def test_indexes_recursively_in_natural_order_and_skips_non_images(
     (tmp_path / "notes.txt").write_text("not an image")
 
     assert [path for path, _ in index_images(tmp_path)] == [earlier, later]
+
+
+def test_image_signature_cache_reuses_unchanged_directory_index(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "photos"
+    directory.mkdir()
+    first = directory / "photo-1.pgm"
+    second = directory / "photo-2.pgm"
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
+    calls: list[Path] = []
+
+    class Analyzer:
+        def analyze(self, path: Path) -> image_duplicates.ImageSignature:
+            calls.append(path)
+            return image_duplicates.ImageSignature(
+                (1 << 255) | int.from_bytes(path.read_bytes(), "big"),
+                (1, 2, 3),
+                (10, 20),
+            )
+
+    indexer = image_duplicates.RecursiveDirectoryIndexer(
+        Analyzer(),
+        scanner=image_duplicates.ImageDirectoryScanner(),
+        cache=image_duplicates.ImageSignatureCache(tmp_path / "cache"),
+        ignored_errors=(),
+    )
+
+    first_index = indexer.index(directory)
+    calls.clear()
+    second_index = indexer.index(directory)
+
+    assert second_index == first_index
+    assert calls == []
+
+
+def test_image_signature_cache_reindexes_only_changed_files(tmp_path: Path) -> None:
+    directory = tmp_path / "photos"
+    directory.mkdir()
+    changed = directory / "photo-1.pgm"
+    unchanged = directory / "photo-2.pgm"
+    changed.write_bytes(b"old")
+    unchanged.write_bytes(b"same")
+    calls: list[Path] = []
+
+    class Analyzer:
+        def analyze(self, path: Path) -> image_duplicates.ImageSignature:
+            calls.append(path)
+            return image_duplicates.ImageSignature(
+                int.from_bytes(path.read_bytes(), "big"),
+                (1, 2, 3),
+            )
+
+    indexer = image_duplicates.RecursiveDirectoryIndexer(
+        Analyzer(),
+        scanner=image_duplicates.ImageDirectoryScanner(),
+        cache=image_duplicates.ImageSignatureCache(tmp_path / "cache"),
+        ignored_errors=(),
+    )
+    indexer.index(directory)
+    calls.clear()
+    changed.write_bytes(b"new and larger")
+
+    indexed = indexer.index(directory)
+
+    assert calls == [changed]
+    assert [item.path for item in indexed] == [changed, unchanged]
+    assert indexed[0].value.phash == int.from_bytes(b"new and larger", "big")
+
+
+def test_image_signature_cache_recovers_from_corrupt_data(tmp_path: Path) -> None:
+    directory = tmp_path / "photos"
+    directory.mkdir()
+    source = directory / "photo.pgm"
+    source.write_bytes(b"image")
+    cache_directory = tmp_path / "cache"
+    calls = 0
+
+    class Analyzer:
+        def analyze(self, path: Path) -> image_duplicates.ImageSignature:
+            nonlocal calls
+            calls += 1
+            return image_duplicates.ImageSignature(123, (1, 2, 3))
+
+    indexer = image_duplicates.RecursiveDirectoryIndexer(
+        Analyzer(),
+        scanner=image_duplicates.ImageDirectoryScanner(),
+        cache=image_duplicates.ImageSignatureCache(cache_directory),
+        ignored_errors=(),
+    )
+    indexer.index(directory)
+    cache_file = next(cache_directory.glob("*.json"))
+    cache_file.write_text("not json")
+
+    assert indexer.index(directory)[0].value.phash == 123
+    assert calls == 2
 
 
 def test_oversized_images_are_skipped_without_decompression_bomb_warning(
