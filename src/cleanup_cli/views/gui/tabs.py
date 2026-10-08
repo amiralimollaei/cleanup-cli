@@ -10,7 +10,7 @@ from pathlib import Path
 import gi  # pyright: ignore[reportMissingImports]
 
 gi.require_version("Gtk", "4.0")
-from gi.repository import GLib, Gtk  # noqa: E402  # pyright: ignore[reportMissingImports, reportAttributeAccessIssue]
+from gi.repository import Gtk  # noqa: E402  # pyright: ignore[reportMissingImports, reportAttributeAccessIssue]
 
 from cleanup_cli.controllers.core import (
     Controller,
@@ -38,6 +38,69 @@ from cleanup_cli.views.gui.application import (
     settings_group,
 )
 from cleanup_cli.views.gui.results import ResultRow
+
+
+def _directory_path(directory: str | Path) -> Path:
+    path_text = str(directory).strip()
+    if not path_text:
+        raise ValueError("select a directory")
+    return Path(path_text).expanduser()
+
+
+def _add_directory_setting(
+    form: Gtk.Box,
+    *,
+    input_purpose: Gtk.InputPurpose | None = None,
+) -> Gtk.Entry:
+    directory = Gtk.Entry(
+        placeholder_text="Select an image directory",
+        primary_icon_name="folder-symbolic",
+        hexpand=True,
+    )
+    directory.update_property([Gtk.AccessibleProperty.LABEL], ["Image folder"])
+    if input_purpose is not None:
+        directory.set_input_purpose(input_purpose)
+
+    browse = Gtk.Button(
+        icon_name="folder-open-symbolic",
+        tooltip_text="Choose a directory",
+    )
+    browse.connect(
+        "clicked",
+        lambda *_: choose_folder(directory, "Choose Image Directory"),
+    )
+    directory_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+    directory_box.append(directory)
+    directory_box.append(browse)
+    form.append(
+        settings_group(
+            "Image folder",
+            setting_row(
+                "", directory_box, "Includes images in subfolders.", stacked=True
+            ),
+        )
+    )
+    return directory
+
+
+def _add_resource_settings(
+    form: Gtk.Box,
+) -> tuple[OptionalNumberControl, OptionalNumberControl]:
+    workers = OptionalNumberControl(minimum=1, maximum=1024, value=4)
+    memory = OptionalNumberControl(
+        minimum=1,
+        maximum=1048576,
+        value=512,
+        unit="MiB",
+    )
+    form.append(
+        settings_group(
+            "Resources",
+            setting_row("Workers", workers.widget),
+            setting_row("Memory", memory.widget),
+        )
+    )
+    return workers, memory
 
 
 class DeduplicationGtkTab(
@@ -80,9 +143,7 @@ class DeduplicationGtkTab(
         max_workers: int | None = None,
         memory_limit_mb: int | None = None,
     ) -> DeduplicationRequest:
-        path_text = str(directory).strip()
-        if not path_text:
-            raise ValueError("select a directory")
+        directory_path = _directory_path(directory)
         validate_inclusive_range(
             "threshold",
             threshold,
@@ -90,7 +151,7 @@ class DeduplicationGtkTab(
             maximum=PHASH_BITS,
         )
         return DeduplicationRequest(
-            Path(path_text).expanduser(),
+            directory_path,
             DeduplicationOptions(
                 threshold=threshold,
                 delete=delete,
@@ -102,32 +163,9 @@ class DeduplicationGtkTab(
     def build(self) -> Gtk.Widget:
         form = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
 
-        directory = Gtk.Entry(
-            placeholder_text="Select an image directory",
-            primary_icon_name="folder-symbolic",
-            hexpand=True,
-        )
-        directory.update_property([Gtk.AccessibleProperty.LABEL], ["Image folder"])
-        directory.set_input_purpose(Gtk.InputPurpose.FREE_FORM)
-        self._directory = directory
-        browse = Gtk.Button(
-            icon_name="folder-open-symbolic",
-            tooltip_text="Choose a directory",
-        )
-        browse.connect(
-            "clicked",
-            lambda *_: choose_folder(directory, "Choose Image Directory"),
-        )
-        directory_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        directory_box.append(directory)
-        directory_box.append(browse)
-        form.append(
-            settings_group(
-                "Image folder",
-                setting_row(
-                    "", directory_box, "Includes images in subfolders.", stacked=True
-                ),
-            )
+        self._directory = _add_directory_setting(
+            form,
+            input_purpose=Gtk.InputPurpose.FREE_FORM,
         )
 
         threshold = Gtk.SpinButton.new_with_range(0, 256, 1)
@@ -153,21 +191,7 @@ class DeduplicationGtkTab(
             )
         )
 
-        self._workers = OptionalNumberControl(minimum=1, maximum=1024, value=4)
-
-        self._memory = OptionalNumberControl(
-            minimum=1,
-            maximum=1048576,
-            value=512,
-            unit="MiB",
-        )
-        form.append(
-            settings_group(
-                "Resources",
-                setting_row("Workers", self._workers.widget),
-                setting_row("Memory", self._memory.widget),
-            )
-        )
+        self._workers, self._memory = _add_resource_settings(form)
 
         run_button = Gtk.Button(label="Find Duplicates")
         run_button.add_css_class("suggested-action")
@@ -227,20 +251,11 @@ class DeduplicationGtkTab(
         self._submit(
             replace(
                 request,
-                on_result=self._queue_duplicate,
+                on_result=self._queue_streamed_result,
                 on_progress=self._queue_progress,
             ),
             activity,
         )
-
-    def _queue_duplicate(self, duplicate: Duplicate) -> None:
-        self._queue_streamed_result(duplicate)
-
-    def _append_duplicate(self, duplicate: Duplicate) -> bool:
-        if self._closed:
-            return GLib.SOURCE_REMOVE
-        self._append_result_batch((duplicate,))
-        return GLib.SOURCE_REMOVE
 
     def _append_result_batch(self, results: Sequence[Duplicate]) -> None:
         deleted = self._delete.get_active() if self._delete is not None else False
@@ -386,11 +401,8 @@ class WebPConversionGtkTab(
         max_workers: int | None = None,
         memory_limit_mb: int | None = None,
     ) -> WebPConversionRequest:
-        path_text = str(directory).strip()
-        if not path_text:
-            raise ValueError("select a directory")
         return WebPConversionRequest(
-            Path(path_text).expanduser(),
+            _directory_path(directory),
             WebPOptions(
                 quality=quality,
                 replace=replace,
@@ -402,32 +414,7 @@ class WebPConversionGtkTab(
     def build(self) -> Gtk.Widget:
         form = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
 
-        directory = Gtk.Entry(
-            placeholder_text="Select an image directory",
-            primary_icon_name="folder-symbolic",
-            hexpand=True,
-        )
-        directory.update_property([Gtk.AccessibleProperty.LABEL], ["Image folder"])
-        self._directory = directory
-        browse = Gtk.Button(
-            icon_name="folder-open-symbolic",
-            tooltip_text="Choose a directory",
-        )
-        browse.connect(
-            "clicked",
-            lambda *_: choose_folder(directory, "Choose Image Directory"),
-        )
-        directory_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        directory_box.append(directory)
-        directory_box.append(browse)
-        form.append(
-            settings_group(
-                "Image folder",
-                setting_row(
-                    "", directory_box, "Includes images in subfolders.", stacked=True
-                ),
-            )
-        )
+        self._directory = _add_directory_setting(form)
 
         quality = Gtk.SpinButton.new_with_range(0, 100, 1)
         quality.set_value(80)
@@ -450,21 +437,7 @@ class WebPConversionGtkTab(
             )
         )
 
-        self._workers = OptionalNumberControl(minimum=1, maximum=1024, value=4)
-
-        self._memory = OptionalNumberControl(
-            minimum=1,
-            maximum=1048576,
-            value=512,
-            unit="MiB",
-        )
-        form.append(
-            settings_group(
-                "Resources",
-                setting_row("Workers", self._workers.widget),
-                setting_row("Memory", self._memory.widget),
-            )
-        )
+        self._workers, self._memory = _add_resource_settings(form)
 
         run_button = Gtk.Button(label="Check Images")
         run_button.add_css_class("suggested-action")
@@ -525,20 +498,11 @@ class WebPConversionGtkTab(
         self._submit(
             replace(
                 request,
-                on_result=self._queue_result,
+                on_result=self._queue_streamed_result,
                 on_progress=self._queue_progress,
             ),
             activity,
         )
-
-    def _queue_result(self, result: WebPResult) -> None:
-        self._queue_streamed_result(result)
-
-    def _append_result(self, result: WebPResult) -> bool:
-        if self._closed:
-            return GLib.SOURCE_REMOVE
-        self._append_result_batch((result,))
-        return GLib.SOURCE_REMOVE
 
     def _append_result_batch(self, results: Sequence[WebPResult]) -> None:
         rows = []

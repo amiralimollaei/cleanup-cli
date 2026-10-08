@@ -850,7 +850,7 @@ def test_gui_appends_streamed_results_while_task_is_running() -> None:
     tab.build()
     tab._running = True
 
-    assert tab._append_duplicate(duplicate) is GLib.SOURCE_REMOVE
+    tab._append_result_batch((duplicate,))
 
     assert tab._running
     assert tab._result_model is not None
@@ -880,8 +880,7 @@ def test_gui_appends_streamed_webp_results_while_task_is_running() -> None:
     tab.build()
     tab._running = True
 
-    assert tab._append_result(conversion) is GLib.SOURCE_REMOVE
-    assert tab._append_result(skip) is GLib.SOURCE_REMOVE
+    tab._append_result_batch((conversion, skip))
 
     assert tab._running
     assert tab._result_model is not None
@@ -1150,7 +1149,7 @@ def test_shutdown_releases_producer_waiting_on_a_full_result_queue() -> None:
         assert not controller.finished.is_set()
         tab.shutdown()
         assert controller.finished.wait(2)
-        tab._queue_duplicate(duplicate)
+        tab._queue_streamed_result(duplicate)
         tab._queue_progress(TaskProgress("Late update", 1, 1))
         _process_gtk_until(lambda: tab._completion is None)
         assert tab._closed
@@ -1221,7 +1220,7 @@ def test_realized_results_exit_cleanly_with_retained_global_references() -> None
 
         def produce():
             for result in results:
-                tab._queue_duplicate(result)
+                tab._queue_streamed_result(result)
             tab._schedule_completion(future)
 
         producer = threading.Thread(target=produce)
