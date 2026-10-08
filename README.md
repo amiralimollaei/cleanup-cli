@@ -59,6 +59,19 @@ requires confirmation. The UI uses symbolic icons from the active GNOME icon
 theme and follows GNOME's light/dark preference, including changes made while
 the application is open.
 
+The window uses compact tool navigation beside the title in the header bar and
+grouped settings beside a results panel. Drag the divider to give either panel
+more room; each scrolls independently. Narrow, tall windows stack the panels,
+while short windows keep them side by side. The action button stays visible,
+and the empty results area provides guidance for the selected tool. Divider
+positions are shared across tools, and **Reset Panel Sizes** in the main menu
+restores their defaults. The settings panel keeps its controls fully visible,
+with a vertical scrollbar shown whenever its content needs more height.
+
+Live results arrive in batches, and the list reuses widgets for visible rows so
+large result sets leave the window responsive. The summary uses a single line
+of monospace text; hover over it to see the full summary when space is limited.
+
 The main view is extensible and accepts zero or any number of tabs. A tab only
 needs a title, a symbolic icon name, and a method that builds its GTK widget:
 

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import replace
+from itertools import chain
 from pathlib import Path
 
 import gi  # pyright: ignore[reportMissingImports]
@@ -29,21 +31,32 @@ from cleanup_cli.models.validation import validate_inclusive_range
 from cleanup_cli.views.gui.application import (
     ControllerGtkTab,
     OptionalNumberControl,
-    add_form_row,
     choose_folder,
     confirm_destructive_action,
-    form_grid,
     result_row,
+    setting_row,
+    settings_group,
 )
+from cleanup_cli.views.gui.results import ResultRow
 
 
 class DeduplicationGtkTab(
-    ControllerGtkTab[DeduplicationRequest, DeduplicationResult]
+    ControllerGtkTab[DeduplicationRequest, DeduplicationResult, Duplicate]
 ):
     """GUI workflow for finding and optionally deleting duplicate images."""
 
     title = "Duplicate Images"
     icon_name = "edit-find-symbolic"
+    description = "Find matching images and reclaim space in your library."
+    empty_title = "Make room for the originals"
+    empty_description = (
+        "See which images match, which copy to keep, and how much space you could save."
+    )
+    empty_steps = (
+        "Choose a folder containing your images.",
+        "Start with threshold 0 for the strictest matching.",
+        "Review the results before enabling deletion.",
+    )
 
     def __init__(
         self,
@@ -87,12 +100,14 @@ class DeduplicationGtkTab(
         )
 
     def build(self) -> Gtk.Widget:
-        grid = form_grid()
+        form = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
 
         directory = Gtk.Entry(
             placeholder_text="Select an image directory",
             primary_icon_name="folder-symbolic",
+            hexpand=True,
         )
+        directory.update_property([Gtk.AccessibleProperty.LABEL], ["Image folder"])
         directory.set_input_purpose(Gtk.InputPurpose.FREE_FORM)
         self._directory = directory
         browse = Gtk.Button(
@@ -106,16 +121,39 @@ class DeduplicationGtkTab(
         directory_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         directory_box.append(directory)
         directory_box.append(browse)
-        add_form_row(grid, 0, "Directory", directory_box)
+        form.append(
+            settings_group(
+                "Image folder",
+                setting_row(
+                    "", directory_box, "Includes images in subfolders.", stacked=True
+                ),
+            )
+        )
 
         threshold = Gtk.SpinButton.new_with_range(0, 256, 1)
         threshold.set_value(0)
         threshold.set_numeric(True)
         self._threshold = threshold
-        add_form_row(grid, 1, "Similarity threshold", threshold)
+        delete = Gtk.Switch(valign=Gtk.Align.CENTER)
+        self._delete = delete
+        delete.connect("notify::active", self._sync_mode)
+        form.append(
+            settings_group(
+                "Matching & cleanup",
+                setting_row(
+                    "Similarity threshold",
+                    threshold,
+                    "0 is strictest. Higher values allow more differences.",
+                ),
+                setting_row(
+                    "Delete duplicates",
+                    self._delete,
+                    "Permanently remove matches after confirmation.",
+                ),
+            )
+        )
 
         self._workers = OptionalNumberControl(minimum=1, maximum=1024, value=4)
-        add_form_row(grid, 2, "Workers", self._workers.widget)
 
         self._memory = OptionalNumberControl(
             minimum=1,
@@ -123,21 +161,34 @@ class DeduplicationGtkTab(
             value=512,
             unit="MiB",
         )
-        add_form_row(grid, 3, "Memory limit", self._memory.widget)
-
-        self._delete = Gtk.Switch(halign=Gtk.Align.START, valign=Gtk.Align.CENTER)
-        add_form_row(grid, 4, "Delete duplicates", self._delete)
-
-        run_button = Gtk.Button(
-            label="Find Duplicates",
-            icon_name="edit-find-symbolic",
-            halign=Gtk.Align.END,
+        form.append(
+            settings_group(
+                "Resources",
+                setting_row("Workers", self._workers.widget),
+                setting_row("Memory", self._memory.widget),
+            )
         )
+
+        run_button = Gtk.Button(label="Find Duplicates")
         run_button.add_css_class("suggested-action")
         run_button.connect("clicked", self._on_run)
         self._run_button = run_button
-        grid.attach(run_button, 1, 5, 1, 1)
-        return self._page(grid)
+        page = self._page(form)
+        self._sync_mode()
+        return page
+
+    def _sync_mode(self, *_args: object) -> None:
+        destructive = self._delete is not None and self._delete.get_active()
+        self._update_mode(
+            destructive,
+            "Deletion enabled",
+            "Matched files will be deleted after confirmation."
+            if destructive else "Preview only. Your original files stay in place.",
+        )
+        if self._run_button is not None:
+            self._run_button.set_label(
+                "Find & Delete" if destructive else "Find Duplicates"
+            )
 
     def _on_run(self, *_args: object) -> None:
         try:
@@ -168,7 +219,9 @@ class DeduplicationGtkTab(
         request: DeduplicationRequest,
         activity: str,
     ) -> None:
-        self._prepare_results()
+        if self._running or self._closed:
+            return
+        self._begin_results()
         self._streamed_count = 0
         self._streamed_saved_bytes = 0
         self._submit(
@@ -181,18 +234,22 @@ class DeduplicationGtkTab(
         )
 
     def _queue_duplicate(self, duplicate: Duplicate) -> None:
-        GLib.idle_add(self._append_duplicate, duplicate)
+        self._queue_streamed_result(duplicate)
 
     def _append_duplicate(self, duplicate: Duplicate) -> bool:
         if self._closed:
             return GLib.SOURCE_REMOVE
-        if self._result_list is None:
-            raise RuntimeError("tab has not been built")
+        self._append_result_batch((duplicate,))
+        return GLib.SOURCE_REMOVE
+
+    def _append_result_batch(self, results: Sequence[Duplicate]) -> None:
         deleted = self._delete.get_active() if self._delete is not None else False
         action = "Deleted" if deleted else "Would delete"
-        self._result_list.append(self._duplicate_row(duplicate, deleted, action))
-        self._streamed_count += 1
-        self._streamed_saved_bytes += duplicate.saved_bytes
+        self._append_rows([
+            self._duplicate_row(duplicate, deleted, action) for duplicate in results
+        ])
+        self._streamed_count += len(results)
+        self._streamed_saved_bytes += sum(duplicate.saved_bytes for duplicate in results)
         status = "deleted" if deleted else "found"
         self._set_summary(
             "checkmark-symbolic",
@@ -203,7 +260,6 @@ class DeduplicationGtkTab(
                 deleted,
             ),
         )
-        return GLib.SOURCE_REMOVE
 
     def _request_from_form(self) -> DeduplicationRequest:
         if any(
@@ -243,10 +299,12 @@ class DeduplicationGtkTab(
             )
             return
 
-        result_list = self._prepare_results()
         action = "Deleted" if result.deleted else "Would delete"
-        for duplicate in result.duplicates:
-            result_list.append(self._duplicate_row(duplicate, result.deleted, action))
+        if not self._has_streamed_results(len(result.duplicates)):
+            self._replace_result_rows(
+                self._duplicate_row(duplicate, result.deleted, action)
+                for duplicate in result.duplicates
+            )
         status = "deleted" if result.deleted else "found"
         count = len(result.duplicates)
         self._set_summary(
@@ -264,7 +322,7 @@ class DeduplicationGtkTab(
         duplicate: Duplicate,
         deleted: bool,
         action: str,
-    ) -> Gtk.Widget:
+    ) -> ResultRow:
         savings = "Saved" if deleted else "Would save"
         return result_row(
             "edit-delete-symbolic" if deleted else "edit-find-symbolic",
@@ -288,12 +346,22 @@ class DeduplicationGtkTab(
 
 
 class WebPConversionGtkTab(
-    ControllerGtkTab[WebPConversionRequest, WebPDirectoryConversionResult]
+    ControllerGtkTab[WebPConversionRequest, WebPDirectoryConversionResult, WebPResult]
 ):
     """GUI workflow for validating or replacing images with WebP files."""
 
     title = "WebP Conversion"
     icon_name = "image-x-generic-symbolic"
+    description = "Find smaller WebP versions of your images without changing dimensions."
+    empty_title = "Smaller files, more space"
+    empty_description = (
+        "Check which images can become smaller WebP files before replacing originals."
+    )
+    empty_steps = (
+        "Choose a folder containing your images.",
+        "Set the quality. Higher values preserve more detail.",
+        "Check the results, then enable replacement when ready.",
+    )
 
     def __init__(
         self,
@@ -332,12 +400,14 @@ class WebPConversionGtkTab(
         )
 
     def build(self) -> Gtk.Widget:
-        grid = form_grid()
+        form = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
 
         directory = Gtk.Entry(
             placeholder_text="Select an image directory",
             primary_icon_name="folder-symbolic",
+            hexpand=True,
         )
+        directory.update_property([Gtk.AccessibleProperty.LABEL], ["Image folder"])
         self._directory = directory
         browse = Gtk.Button(
             icon_name="folder-open-symbolic",
@@ -350,16 +420,37 @@ class WebPConversionGtkTab(
         directory_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         directory_box.append(directory)
         directory_box.append(browse)
-        add_form_row(grid, 0, "Directory", directory_box)
+        form.append(
+            settings_group(
+                "Image folder",
+                setting_row(
+                    "", directory_box, "Includes images in subfolders.", stacked=True
+                ),
+            )
+        )
 
         quality = Gtk.SpinButton.new_with_range(0, 100, 1)
         quality.set_value(80)
         quality.set_numeric(True)
         self._quality = quality
-        add_form_row(grid, 1, "Quality", quality)
+        replace_originals = Gtk.Switch(valign=Gtk.Align.CENTER)
+        self._replace = replace_originals
+        replace_originals.connect("notify::active", self._sync_mode)
+        form.append(
+            settings_group(
+                "Conversion",
+                setting_row(
+                    "Quality", quality, "0–100. Higher values preserve more detail."
+                ),
+                setting_row(
+                    "Replace originals",
+                    self._replace,
+                    "Only replace a source when its WebP is smaller and validated.",
+                ),
+            )
+        )
 
         self._workers = OptionalNumberControl(minimum=1, maximum=1024, value=4)
-        add_form_row(grid, 2, "Workers", self._workers.widget)
 
         self._memory = OptionalNumberControl(
             minimum=1,
@@ -367,21 +458,34 @@ class WebPConversionGtkTab(
             value=512,
             unit="MiB",
         )
-        add_form_row(grid, 3, "Memory limit", self._memory.widget)
-
-        self._replace = Gtk.Switch(halign=Gtk.Align.START, valign=Gtk.Align.CENTER)
-        add_form_row(grid, 4, "Replace originals", self._replace)
-
-        run_button = Gtk.Button(
-            label="Convert Images",
-            icon_name="media-playback-start-symbolic",
-            halign=Gtk.Align.END,
+        form.append(
+            settings_group(
+                "Resources",
+                setting_row("Workers", self._workers.widget),
+                setting_row("Memory", self._memory.widget),
+            )
         )
+
+        run_button = Gtk.Button(label="Check Images")
         run_button.add_css_class("suggested-action")
         run_button.connect("clicked", self._on_run)
         self._run_button = run_button
-        grid.attach(run_button, 1, 5, 1, 1)
-        return self._page(grid)
+        page = self._page(form)
+        self._sync_mode()
+        return page
+
+    def _sync_mode(self, *_args: object) -> None:
+        destructive = self._replace is not None and self._replace.get_active()
+        self._update_mode(
+            destructive,
+            "Replacement enabled",
+            "Smaller, validated WebP files will replace originals after confirmation."
+            if destructive else "Preview only. No output files are kept.",
+        )
+        if self._run_button is not None:
+            self._run_button.set_label(
+                "Convert & Replace" if destructive else "Check Images"
+            )
 
     def _on_run(self, *_args: object) -> None:
         try:
@@ -412,7 +516,9 @@ class WebPConversionGtkTab(
         request: WebPConversionRequest,
         activity: str,
     ) -> None:
-        self._prepare_results()
+        if self._running or self._closed:
+            return
+        self._begin_results()
         self._streamed_conversions = 0
         self._streamed_skips = 0
         self._streamed_saved_bytes = 0
@@ -426,20 +532,25 @@ class WebPConversionGtkTab(
         )
 
     def _queue_result(self, result: WebPResult) -> None:
-        GLib.idle_add(self._append_result, result)
+        self._queue_streamed_result(result)
 
     def _append_result(self, result: WebPResult) -> bool:
         if self._closed:
             return GLib.SOURCE_REMOVE
-        if self._result_list is None:
-            raise RuntimeError("tab has not been built")
-        if isinstance(result, WebPConversion):
-            self._result_list.append(self._conversion_row(result))
-            self._streamed_conversions += 1
-            self._streamed_saved_bytes += result.saved_bytes
-        elif isinstance(result, WebPSkip):
-            self._result_list.append(self._skip_row(result))
-            self._streamed_skips += 1
+        self._append_result_batch((result,))
+        return GLib.SOURCE_REMOVE
+
+    def _append_result_batch(self, results: Sequence[WebPResult]) -> None:
+        rows = []
+        for result in results:
+            if isinstance(result, WebPConversion):
+                rows.append(self._conversion_row(result))
+                self._streamed_conversions += 1
+                self._streamed_saved_bytes += result.saved_bytes
+            elif isinstance(result, WebPSkip):
+                rows.append(self._skip_row(result))
+                self._streamed_skips += 1
+        self._append_rows(rows)
         self._set_summary(
             "checkmark-symbolic",
             self._summary_text(
@@ -448,7 +559,6 @@ class WebPConversionGtkTab(
                 self._streamed_saved_bytes,
             ),
         )
-        return GLib.SOURCE_REMOVE
 
     def _request_from_form(self) -> WebPConversionRequest:
         if any(
@@ -488,11 +598,11 @@ class WebPConversionGtkTab(
             )
             return
 
-        result_list = self._prepare_results()
-        for conversion in result.conversions:
-            result_list.append(self._conversion_row(conversion))
-        for skip in result.skips:
-            result_list.append(self._skip_row(skip))
+        if not self._has_streamed_results(len(result.conversions) + len(result.skips)):
+            self._replace_result_rows(chain(
+                (self._conversion_row(conversion) for conversion in result.conversions),
+                (self._skip_row(skip) for skip in result.skips),
+            ))
         self._set_summary(
             "checkmark-symbolic",
             self._summary_text(
@@ -503,7 +613,7 @@ class WebPConversionGtkTab(
         )
 
     @staticmethod
-    def _conversion_row(conversion: WebPConversion) -> Gtk.Widget:
+    def _conversion_row(conversion: WebPConversion) -> ResultRow:
         return result_row(
             "image-x-generic-symbolic",
             f"Converted: {conversion.source}",
@@ -512,11 +622,14 @@ class WebPConversionGtkTab(
         )
 
     @staticmethod
-    def _skip_row(skip: WebPSkip) -> Gtk.Widget:
+    def _skip_row(skip: WebPSkip) -> ResultRow:
+        reason = skip.reason
+        if reason == "replacement not enabled (use --replace)":
+            reason = "Enable Replace originals to apply this conversion."
         return result_row(
             "dialog-information-symbolic",
             f"Skipped: {skip.path}",
-            skip.reason,
+            reason,
         )
 
     @staticmethod

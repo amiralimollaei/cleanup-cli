@@ -1,0 +1,87 @@
+/* Use the active GTK theme's colors so light and dark variants stay native. */
+.cleanup-window {
+    background-color: @theme_bg_color;
+}
+
+.cleanup-tool-switcher button {
+    min-width: 0;
+    padding: 6px 12px;
+}
+
+.cleanup-card {
+    background-color: @theme_base_color;
+    border: 1px solid alpha(@theme_fg_color, 0.12);
+    border-radius: 12px;
+}
+
+.cleanup-setting-row {
+    padding: 10px;
+}
+
+.cleanup-summary {
+    font-family: monospace;
+}
+
+.cleanup-mode {
+    border-radius: 20px;
+    padding: 6px 12px;
+    font-size: 0.9em;
+    font-weight: bold;
+    color: @theme_selected_bg_color;
+    background-color: alpha(@theme_selected_bg_color, 0.12);
+}
+
+.cleanup-destructive-mode {
+    color: @error_color;
+    background-color: alpha(@error_color, 0.12);
+}
+
+.cleanup-action button {
+    padding: 10px 16px;
+    font-weight: bold;
+}
+
+.cleanup-error {
+    color: @error_color;
+    background-color: alpha(@error_color, 0.08);
+    border-radius: 8px;
+    padding: 10px;
+}
+
+.cleanup-step {
+    min-width: 24px;
+    min-height: 24px;
+    border-radius: 12px;
+    font-weight: bold;
+    color: @theme_selected_bg_color;
+    background-color: alpha(@theme_selected_bg_color, 0.12);
+}
+
+.cleanup-card list {
+    background-color: transparent;
+}
+
+.cleanup-card row {
+    padding: 2px 0;
+}
+
+.cleanup-workspace > separator.wide {
+    min-width: 20px;
+    min-height: 20px;
+    background-color: transparent;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+    background-repeat: no-repeat;
+    background-position: center;
+}
+
+.cleanup-workspace.horizontal > separator.wide {
+    background-image: linear-gradient(to bottom, alpha(@theme_fg_color, 0.3), alpha(@theme_fg_color, 0.3));
+    background-size: 4px 28px;
+}
+
+.cleanup-workspace.vertical > separator.wide {
+    background-image: linear-gradient(to bottom, alpha(@theme_fg_color, 0.3), alpha(@theme_fg_color, 0.3));
+    background-size: 28px 4px;
+}
