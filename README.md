@@ -59,6 +59,21 @@ requires confirmation. The UI uses symbolic icons from the active GNOME icon
 theme and follows GNOME's light/dark preference, including changes made while
 the application is open.
 
+### Screenshots
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="assets/duplicate-images.png" alt="Duplicate Images tab" width="100%">
+      <br><strong>Find duplicate images</strong>
+    </td>
+    <td align="center" width="50%">
+      <img src="assets/webp-conversion.png" alt="WebP Conversion tab" width="100%">
+      <br><strong>Convert images to WebP</strong>
+    </td>
+  </tr>
+</table>
+
 The window uses compact tool navigation beside the title in the header bar and
 grouped settings beside a results panel. Drag the divider to give either panel
 more room; each scrolls independently. Narrow, tall windows stack the panels,
