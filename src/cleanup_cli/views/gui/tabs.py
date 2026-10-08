@@ -86,7 +86,12 @@ def _add_directory_setting(
 def _add_resource_settings(
     form: Gtk.Box,
 ) -> tuple[OptionalNumberControl, OptionalNumberControl]:
-    workers = OptionalNumberControl(minimum=1, maximum=1024, value=4)
+    workers = OptionalNumberControl(
+        minimum=1,
+        maximum=1024,
+        value=4,
+        unit="threads",
+    )
     memory = OptionalNumberControl(
         minimum=1,
         maximum=1048576,

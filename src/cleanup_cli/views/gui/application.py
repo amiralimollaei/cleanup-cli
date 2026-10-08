@@ -892,6 +892,7 @@ def setting_row(
     )
     row.add_css_class("cleanup-setting-row")
     labels = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3, hexpand=True)
+    labels.set_valign(Gtk.Align.CENTER)
     if label:
         field_label = Gtk.Label(label=label, xalign=0, wrap=True)
         field_label.set_mnemonic_widget(control)
@@ -944,10 +945,13 @@ class OptionalNumberControl:
         self.automatic.set_hexpand(True)
         self.widget.append(self.automatic)
         self.widget.append(self.spin)
+        # Reserve a unit column even when this control has no visible unit so
+        # paired controls keep their Auto checkboxes and spin buttons aligned.
+        unit_label = Gtk.Label(label=unit or "")
+        unit_label.set_width_chars(max(7, len(unit or "")))
         if unit is not None:
-            unit_label = Gtk.Label(label=unit)
             unit_label.add_css_class("dim-label")
-            self.widget.append(unit_label)
+        self.widget.append(unit_label)
 
     @property
     def value(self) -> int | None:
