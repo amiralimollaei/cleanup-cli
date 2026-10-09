@@ -1,0 +1,90 @@
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.24"
+          enable-cache: false
+
+      - name: Check tag matches both package versions
+        run: |
+          cli_version="$(uv version --short)"
+          gui_version="$(uv version --short --project packages/cleanup-gui)"
+          if [[ "v${cli_version}" != "${GITHUB_REF_NAME}" || "v${gui_version}" != "${GITHUB_REF_NAME}" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} must match cleanup-cli (${cli_version}) and cleanup-gui (${gui_version})." >&2
+            exit 1
+          fi
+
+      - name: Build cleanup-cli distributions
+        run: uv build --no-sources --out-dir dist/cleanup-cli
+
+      - name: Build cleanup-gui distributions
+        run: uv build --no-sources --project packages/cleanup-gui --out-dir dist/cleanup-gui
+
+      - name: Check package metadata
+        run: uvx --from twine==7.0.0 twine check --strict dist/cleanup-cli/* dist/cleanup-gui/*
+
+      - name: Check installed CLI wheel
+        run: uv run --isolated --no-project --with dist/cleanup-cli/*.whl python scripts/check_distribution.py
+
+      - name: Check installed CLI source distribution
+        run: uv run --isolated --no-project --with dist/cleanup-cli/*.tar.gz python scripts/check_distribution.py
+
+      - name: Check publishing inputs
+        run: |
+          uv publish --dry-run --trusted-publishing never dist/cleanup-cli/*
+          uv publish --dry-run --trusted-publishing never dist/cleanup-gui/*
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: distributions
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish ${{ matrix.package }}
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [cleanup-cli, cleanup-gui]
+    environment:
+      name: pypi-${{ matrix.package }}
+    permissions:
+      id-token: write
+    steps:
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.24"
+          enable-cache: false
+
+      - name: Download distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: distributions
+          path: dist/
+
+      - name: Publish distributions
+        run: uv publish --trusted-publishing always dist/${{ matrix.package }}/*

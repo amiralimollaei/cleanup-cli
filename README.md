@@ -11,6 +11,10 @@ the `gui` dependency group; its PyCairo dependency is captured in `uv.lock`.
 GTK itself and the headers needed to build those Python extensions are native
 Linux packages.
 
+Install the published CLI package with `pip install cleanup-cli`. To install
+the GTK application and its native Python dependencies, use
+`pip install cleanup-gui`.
+
 On Fedora, install the native prerequisites first. The Python development
 package must match the version in `.python-version` (currently Python 3.12):
 
@@ -280,3 +284,40 @@ Date/time names are validated and sorted chronologically. Supported forms are:
 Different representations of the same timestamp compare equally and use the
 filename only as a deterministic tie-breaker. Invalid dates fall back to the
 normal numeric rules instead of raising an error.
+
+## Publishing
+
+The release workflow builds and publishes both distributions when a `v*` tag
+matches the version in each package's `pyproject.toml`. Keep the two package
+versions aligned, then push the matching tag (for example, `v0.1.0`).
+
+Create the following GitHub environments and configure a separate PyPI Trusted
+Publisher for each project:
+
+| PyPI project | GitHub environment |
+| --- | --- |
+| `cleanup-cli` | `pypi-cleanup-cli` |
+| `cleanup-gui` | `pypi-cleanup-gui` |
+
+Both publishers use owner `amiralimollaei`, repository `cleanup-cli`, and
+workflow filename `release.yml`. The environment field must match the table.
+For new projects, add pending publishers from your PyPI account's **Publishing**
+page. The distinct environments let PyPI identify which project to create.
+
+Pending publishers do not reserve names. To claim the names before pushing the
+workflow to GitHub, build and upload the first release locally instead:
+
+```console
+uv build --no-sources --out-dir dist/cleanup-cli
+uv build --no-sources --project packages/cleanup-gui --out-dir dist/cleanup-gui
+read -rsp "PyPI API token: " UV_PUBLISH_TOKEN
+export UV_PUBLISH_TOKEN
+uv publish --trusted-publishing never dist/cleanup-cli/*
+uv publish --trusted-publishing never dist/cleanup-gui/*
+unset UV_PUBLISH_TOKEN
+```
+
+The first upload requires an account scoped PyPI token because the projects do
+not exist yet. After uploading, add the publishers above to the existing
+projects for future releases. PyPI only claims each name after a successful
+upload.
