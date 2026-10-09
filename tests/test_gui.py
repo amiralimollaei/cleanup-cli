@@ -610,7 +610,8 @@ def test_large_result_stream_yields_to_input_and_keeps_rows_once(
     window.add_css_class("cleanup-window")
     window.set_default_size(980, 720)
     assert tab._result_model is not None
-    assert tab._result_list is not None
+    result_list = tab._result_list
+    assert result_list is not None
     model = tab._result_model
     changes: list[tuple[int, int, int]] = []
     first_items: list[object] = []
@@ -649,13 +650,13 @@ def test_large_result_stream_yields_to_input_and_keeps_rows_once(
 
     monkeypatch.setattr(tab, "_apply_progress", observe_progress)
     model.connect("items-changed", changed)
-    factory = tab._result_list.get_factory()
+    factory = result_list.get_factory()
     assert factory is not None
     factory.connect("setup", lambda _factory, item: factory_widgets.append(item))
     heartbeat_source = GLib.timeout_add(1, heartbeat)
     try:
         window.present()
-        _process_gtk_until(lambda: tab._result_list.get_width() > 0)
+        _process_gtk_until(lambda: result_list.get_width() > 0)
         if isinstance(tab, DeduplicationGtkTab):
             assert isinstance(request, DeduplicationRequest)
             tab._submit_with_results(request, "Streaming...")
