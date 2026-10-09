@@ -50,16 +50,20 @@ GTK widget tests need a working display. On a desktop, run them in a session
 where GTK can open a window. Without a display, those tests are skipped, so a
 passing run with skips does not establish GUI coverage.
 
-For a headless Linux run, install Xvfb, `xvfb-run`, `xauth`, and
-`dbus-run-session`. The release workflow uses this command on Ubuntu 24.04:
+For a headless Linux run, install GTK and its Python bindings, Adwaita icons,
+an SVG loader, fonts, Xvfb, `xvfb-run`, `xauth`, and `dbus-run-session`.
+The release workflow installs these dependencies on Ubuntu 24.04 and uses a
+virtual display with the Adwaita theme and normal scaling:
 
 ```console
-GDK_BACKEND=x11 GSK_RENDERER=cairo GSETTINGS_BACKEND=memory \
+GTK_THEME=Adwaita GDK_BACKEND=x11 GDK_SCALE=1 GDK_DPI_SCALE=1 \
+  GSK_RENDERER=cairo GSETTINGS_BACKEND=memory \
   dbus-run-session -- xvfb-run -a -s "-screen 0 1920x1080x24" \
   uv run --no-sync pytest -q
 ```
 
-The virtual screen size allows the window layout tests to resize their windows.
+Xvfb supplies the display without a desktop session. The virtual screen size
+allows the window layout tests to resize their windows.
 The release workflow also checks that GTK can open the display before running
 pytest. For changes to appearance or interaction, launch the GUI and inspect
 the affected flow; automated widget checks do not replace that inspection.

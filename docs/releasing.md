@@ -30,10 +30,11 @@ does not permit replacing an already uploaded distribution.
 ## What the workflow checks
 
 Before building distributions, the build job on Ubuntu 24.04 installs GTK native
-prerequisites and locked development, GUI, and SciPy dependencies. It creates a
-D-Bus session and Xvfb display, verifies that GTK can open the display, and runs
-the complete pytest suite. This includes display-dependent GUI tests and the
-NumPy/SciPy fallback comparison.
+prerequisites, Adwaita icons, SVG support, fonts, and locked development, GUI,
+and SciPy dependencies. It creates a D-Bus session and Xvfb display, uses the
+Adwaita theme at normal scaling, verifies that GTK can open the display, and
+runs the complete pytest suite. This includes display-dependent GUI tests and
+the NumPy/SciPy fallback comparison.
 
 After the tests succeed, the job builds a wheel and source distribution for
 each package, checks metadata with Twine, and checks the installed CLI wheel
