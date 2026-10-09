@@ -9,7 +9,7 @@ permissions: {}
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -32,6 +32,36 @@ jobs:
             echo "Tag ${GITHUB_REF_NAME} must match cleanup-cli (${cli_version}) and cleanup-gui (${gui_version})." >&2
             exit 1
           fi
+
+      - name: Install GTK build and test prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            gcc pkg-config python3-dev libcairo2-dev libgirepository-2.0-dev \
+            gir1.2-gtk-4.0 gsettings-desktop-schemas adwaita-icon-theme \
+            dbus-x11 xvfb xauth
+
+      - name: Install locked test dependencies
+        run: uv sync --locked --group gui --group scipy
+
+      - name: Run complete test suite with a GTK display
+        env:
+          GDK_BACKEND: x11
+          GSK_RENDERER: cairo
+          GSETTINGS_BACKEND: memory
+        run: |
+          dbus-run-session -- xvfb-run -a -s "-screen 0 1920x1080x24" uv run --no-sync python - <<'PY'
+          import gi
+          import pytest
+
+          gi.require_version("Gtk", "4.0")
+          gi.require_version("Gdk", "4.0")
+          from gi.repository import Gdk, Gtk
+
+          assert Gtk.init_check() and Gdk.Display.get_default() is not None, \
+              "GTK test display is unavailable"
+          raise SystemExit(pytest.main(["-q", "tests"]))
+          PY
 
       - name: Build cleanup-cli distributions
         run: uv build --no-sources --out-dir dist/cleanup-cli

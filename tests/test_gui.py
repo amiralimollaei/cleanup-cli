@@ -38,10 +38,8 @@ from cleanup_cli.views.gui import (
     WebPConversionGtkTab,
     create_gui_view,
 )
-from cleanup_cli.views.gui.application import (
-    GnomeThemeSynchronizer,
-    confirm_destructive_action,
-)
+from cleanup_cli.views.gui.dialogs import confirm_destructive_action
+from cleanup_cli.views.gui.theme import GnomeThemeSynchronizer
 
 
 RequestT = TypeVar("RequestT")

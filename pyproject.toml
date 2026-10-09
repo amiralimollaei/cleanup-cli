@@ -1,6 +1,6 @@
 [project]
 name = "cleanup-cli"
-version = "0.1.0"
+version = "0.1.1"
 description = "Command-line and GTK tools for removing duplicate images and converting images to WebP to save storage."
 readme = "README.md"
 authors = [

@@ -1,69 +1,19 @@
 # Image Cleanup
 
-Command-line and GTK tools for removing duplicate images and converting images
-to WebP to save storage.
+Find duplicate images and convert images to smaller WebP files. Image Cleanup
+provides the `cleanup-cli` command and an optional GTK application for Linux.
 
-## Installation
+## Features
 
-The Python environment is managed with [uv](https://docs.astral.sh/uv/).
-The command-line tools use the default dependencies. The optional GTK GUI is in
-the `gui` dependency group; its PyCairo dependency is captured in `uv.lock`.
-GTK itself and the headers needed to build those Python extensions are native
-Linux packages.
+- Find visually matching images using structural and color signatures, keeping
+  the copy with the highest resolution and using file size to break ties.
+- Convert images to WebP while preserving pixel dimensions, replacing sources
+  only when the validated output is smaller.
+- Preview changes with dry runs before enabling deletion or replacement.
+- See results and storage savings as work completes, with configurable worker
+  and memory limits.
 
-Install the published CLI package with `pip install cleanup-cli`. To install
-the GTK application and its native Python dependencies, use
-`pip install cleanup-gui`.
-
-On Fedora, install the native prerequisites first. The Python development
-package must match the version in `.python-version` (currently Python 3.12):
-
-```console
-sudo dnf install gtk4 python3.12-devel gobject-introspection-devel \
-  cairo-devel cairo-gobject-devel gcc pkgconf-pkg-config
-```
-
-For the command-line tools, create/synchronize the project environment from
-`uv.lock`:
-
-```console
-uv sync
-```
-
-Install the optional GUI dependencies when you want to use the GTK interface:
-
-```console
-uv sync --group gui
-```
-
-Developers running the complete test suite should also install the optional
-`gui` and `scipy` groups. The SciPy group is used to compare the built-in NumPy
-DCT fallback:
-
-```console
-uv sync --group gui --group scipy
-```
-
-Do not install PyGObject with the system Python for this project; `uv sync
---group gui` builds and installs `PyGObject` and `pycairo` into `.venv`.
-
-## GTK graphical interface
-
-Launch the GNOME-style GTK 4 interface with:
-
-```console
-uv run --group gui cleanup-gui
-```
-
-The application provides **Duplicate Images** and **WebP Conversion** tabs.
-Both default to non-destructive dry runs, display scrollable results as each
-completed item arrives, and update a cumulative space-saved summary while the
-controller runs in a background thread. Enabling deletion or replacement
-requires confirmation. The UI uses symbolic icons from the active GNOME icon
-theme and follows GNOME's light/dark preference, including changes made while
-the application is open.
-
-### Screenshots
+## Screenshots
 
 <table>
   <tr>
@@ -78,246 +28,50 @@ the application is open.
   </tr>
 </table>
 
-The window uses compact tool navigation beside the title in the header bar and
-grouped settings beside a results panel. Drag the divider to give either panel
-more room; each scrolls independently. Narrow, tall windows stack the panels,
-while short windows keep them side by side. The action button stays visible,
-and the empty results area provides guidance for the selected tool. Divider
-positions are shared across tools, and **Reset Panel Sizes** in the main menu
-restores their defaults. The settings panel keeps its controls fully visible,
-with a vertical scrollbar shown whenever its content needs more height.
+## Installation
 
-Live results arrive in batches, and the list reuses widgets for visible rows so
-large result sets leave the window responsive. The summary uses a single line
-of monospace text; hover over it to see the full summary when space is limited.
-
-The main view is extensible and accepts zero or any number of tabs. A tab only
-needs a title, a symbolic icon name, and a method that builds its GTK widget:
-
-```python
-import gi
-
-gi.require_version("Gtk", "4.0")
-from gi.repository import Gtk
-
-from cleanup_cli.views.gui import GtkGuiView
-
-
-class InformationTab:
-    title = "Information"
-    icon_name = "dialog-information-symbolic"
-
-    def build(self) -> Gtk.Widget:
-        return Gtk.Label(label="Custom cleanup tool")
-
-
-GtkGuiView(InformationTab()).run()
-```
-
-## Command-line interface
-
-The existing CLI remains available through `uv run cleanup-cli`. For example:
+Requires Python 3.12 or newer. Install the command-line package in a virtual
+environment:
 
 ```console
-uv run cleanup-cli deduplicate /path/to/photos
-uv run cleanup-cli webp /path/to/photos
+python -m pip install cleanup-cli
 ```
 
-The CLI flushes every conversion, skip, or duplicate result as soon as it is
-available, then prints a final total. WebP totals are bytes actually removed
-by successful replacements. Deduplication dry runs report bytes that would be
-reclaimed; `--delete` reports bytes actually deleted.
-
-## Architecture
-
-The package uses Model View Controller boundaries:
-
-- Models in `cleanup_cli/models/` own image policies, filesystem operations,
-  and reusable generic services.
-- Controllers in `cleanup_cli/controllers/` accept immutable request
-  dataclasses and return immutable result dataclasses without depending on CLI
-  concerns.
-- Views in `cleanup_cli/views/` own presentation and production dependency
-  composition. The argparse CLI registers arbitrary subcommands, while the GTK
-  main view registers arbitrary tabs.
-
-Protocols define structural dependencies such as scanners, analyzers, metrics,
-removers, and views. Abstract generic base classes define extensible indexer,
-codec, detector, and controller APIs. Concrete implementations can therefore
-be replaced in tests or by another UI without changing the domain policies.
-
-## Converting images to WebP
-
-The `webp` subcommand recursively finds decodable images and, by default,
-performs a non-destructive dry run. Use `--replace` to opt into replacing each
-source with a `.webp` file in the same directory. Quality 80 is lossy, so keep
-backups before using replacement. Existing WebP images, non-image files, and
-all existing destination directory entries (including dangling symlinks) are
-ignored. Pixel dimensions are preserved and a source is replaced only after
-the output is validated, is smaller, and the source is still the exact file
-that was analyzed. Destination installation is atomic and no-clobber.
+For the Linux GTK application, install its native prerequisites first, then:
 
 ```console
-cleanup-cli webp /path/to/photos --replace
+python -m pip install cleanup-gui
 ```
 
-The default WebP quality is 80. It can be changed from 0 through 100:
+See the [installation guide](docs/installation.md) for environment setup and
+Linux package requirements.
 
-```console
-cleanup-cli webp /path/to/photos --quality 90
-```
+## Quick start
 
-Before decoding, the converter reads each image header and estimates its peak
-decoded and encoder memory from its pixel dimensions. Concurrent conversions
-are admitted only while their combined estimates fit a memory budget. By
-default, the budget is derived conservatively from currently available memory;
-it can be set explicitly for a constrained machine or container:
-
-```console
-cleanup-cli webp /path/to/photos --replace --memory-limit-mb 512
-```
-
-An image whose individual estimate exceeds the budget is skipped without
-decoding it. `--max-workers` remains an upper bound on concurrency, while the
-memory budget may select fewer workers for large images.
-
-## Removing duplicate images
-
-`cleanup-cli` recursively scans a directory, decodes images with Pillow, and
-computes a 256-bit perceptual hash (pHash) from the 16-by-16 low-frequency
-corner of a DCT over a 64-by-64 normalized image. A normalized RGB
-color signature is also checked because grayscale pHash alone cannot detect a
-uniform color shift. Files that Pillow cannot decode as images are ignored.
-Paths are naturally sorted using the rules below. Among matching images, the
-image with the highest pixel resolution is kept. If resolutions match, the
-larger file is kept as a quality tie-breaker; if resolution and file size both
-match, the **last** naturally sorted path is kept.
-
-The default is a dry run and does not change any files:
+Preview duplicate removal or WebP conversion:
 
 ```console
 cleanup-cli deduplicate /path/to/photos
+cleanup-cli webp /path/to/photos
 ```
 
-Before hashing, deduplication reads each image header and estimates its peak
-decode memory from its pixel dimensions. Concurrent hashes are admitted only
-while their combined estimates fit a budget derived from available memory.
-Set an explicit budget for a constrained machine or container:
+Launch the graphical interface:
 
 ```console
-cleanup-cli deduplicate /path/to/photos --memory-limit-mb 512
+cleanup-gui
 ```
 
-Images whose individual estimates exceed the budget are ignored without being
-decoded. `--max-workers` remains an upper bound on hashing concurrency, while
-the memory budget may allow fewer workers for large images.
+Both tools default to a dry run. Deleting duplicates or replacing originals
+requires an explicit option; the GUI also asks for confirmation. Review the
+results and keep backups before applying changes.
 
-Successful image signatures are cached in
-`$XDG_CACHE_HOME/cleanup-cli/image-signatures/`. If `XDG_CACHE_HOME` is not
-set, the cache is stored in `~/.cache/cleanup-cli/image-signatures/`. Each
-scanned directory gets a JSON file named from the SHA-256 hash of its resolved
-path. On later runs, an image is decoded again only when its device, inode,
-size, or nanosecond modification time has changed. Cache data from an older
-signature algorithm is ignored automatically. The cache directory can be
-deleted at any time; it will be rebuilt on the next scan.
+## Documentation
 
-Use `--delete` to remove the duplicates reported by the dry run:
+The [documentation](docs/README.md) covers command options, GUI controls,
+image matching, resource limits, and path ordering.
 
-```console
-cleanup-cli deduplicate /path/to/photos --delete
-```
+## Contributing
 
-Deletion verifies that each candidate is unchanged since indexing. Changed or
-missing candidates are refused rather than deleting a different file. The
-command may still complete partially if an I/O error occurs; inspect its output
-and keep backups because `--delete` has no undo.
-
-The threshold is the maximum normalized structural or color distance. The
-structural value is the Hamming distance between two 256-bit pHashes; average
-RGB channel differences are mapped to the same 0 through 256 range. `0`
-requires equal structural and color signatures; larger values tolerate more
-visual change. A conservative starting point for resized or re-encoded copies
-is 16:
-
-```console
-cleanup-cli deduplicate /path/to/photos --threshold 16
-```
-
-The accepted range is 0 through 256. Perceptual hashes describe low-frequency
-image structure, not byte equality. Higher thresholds increase both tolerance
-and the chance of grouping distinct images, so review the dry-run output
-before using `--delete`.
-
-## Natural sorting of paths
-
-`sort_numbered_paths` sorts a path by every number it contains, from left to
-right, instead of sorting the path alphabetically. Every directory and
-filename component is compared hierarchically:
-
-```python
-from cleanup_cli import sort_numbered_paths
-
-paths = ["dir-10", "dir-2", "dir-1.5-xxx", "abc5-5-XYZ", "misc"]
-ordered = sort_numbered_paths(paths)
-# ["dir-1.5-xxx", "dir-2", "abc5-5-XYZ", "dir-10", "misc"]
-```
-
-`1.5` is treated as one exact decimal number, while names such as
-`chapter-2-part-10` produce the numeric tuple `(2, 10)`. Numeric tuples are
-compared lexicographically, so the first number has priority, then the
-second, and so on. Names with no numbers are sorted alphabetically after
-numbered names. Leading zeros compare numerically (`dir-02` and `dir-2`),
-with spelling used only to break ties. For example, `1/dir-10`, `2/misc`,
-and `100/dir-2` sort in that order because the first path component is
-compared before the filename. Relative and absolute paths retain their path
-components in the comparison.
-
-Date/time names are validated and sorted chronologically. Supported forms are:
-
-- year-first separated dates: `2026-08-08`, `2026_08_08`, `2026.08.08`
-- day-first separated dates: `08-08-2026`, `08_08_2026`, `08.08.2026`
-- compact dates: `20260808`
-- optional separated times such as `17-30-00`, `17_30_00`, `17.30.00`, or
-  `17:30:00` (seconds may be omitted)
-- optional compact times, for example `20260808_173000`
-
-Different representations of the same timestamp compare equally and use the
-filename only as a deterministic tie-breaker. Invalid dates fall back to the
-normal numeric rules instead of raising an error.
-
-## Publishing
-
-The release workflow builds and publishes both distributions when a `v*` tag
-matches the version in each package's `pyproject.toml`. Keep the two package
-versions aligned, then push the matching tag (for example, `v0.1.0`).
-
-Create the following GitHub environments and configure a separate PyPI Trusted
-Publisher for each project:
-
-| PyPI project | GitHub environment |
-| --- | --- |
-| `cleanup-cli` | `pypi-cleanup-cli` |
-| `cleanup-gui` | `pypi-cleanup-gui` |
-
-Both publishers use owner `amiralimollaei`, repository `cleanup-cli`, and
-workflow filename `release.yml`. The environment field must match the table.
-For new projects, add pending publishers from your PyPI account's **Publishing**
-page. The distinct environments let PyPI identify which project to create.
-
-Pending publishers do not reserve names. To claim the names before pushing the
-workflow to GitHub, build and upload the first release locally instead:
-
-```console
-uv build --no-sources --out-dir dist/cleanup-cli
-uv build --no-sources --project packages/cleanup-gui --out-dir dist/cleanup-gui
-read -rsp "PyPI API token: " UV_PUBLISH_TOKEN
-export UV_PUBLISH_TOKEN
-uv publish --trusted-publishing never dist/cleanup-cli/*
-uv publish --trusted-publishing never dist/cleanup-gui/*
-unset UV_PUBLISH_TOKEN
-```
-
-The first upload requires an account scoped PyPI token because the projects do
-not exist yet. After uploading, add the publishers above to the existing
-projects for future releases. PyPI only claims each name after a successful
-upload.
+Bug reports, feature requests, and pull requests are welcome. Use the
+[issue tracker](https://github.com/amiralimollaei/cleanup-cli/issues) or read
+[CONTRIBUTING.md](CONTRIBUTING.md) to get started.

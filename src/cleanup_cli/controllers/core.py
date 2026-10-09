@@ -29,7 +29,14 @@ FrameT = TypeVar("FrameT")
 
 
 class Controller(ABC, Generic[RequestT, ResultT]):
-    """Generic application boundary consumed by a view."""
+    """Generic application boundary consumed by a view.
+
+    Execution returns the complete result. For requests with an ``on_result``
+    observer, controllers may also stream completed items before returning.
+    Streamed items belong to the final result, but custom controllers may
+    stream only some items or none at all. Views reconcile live events with
+    the complete result after successful execution.
+    """
 
     @abstractmethod
     def execute(self, request: RequestT) -> ResultT:

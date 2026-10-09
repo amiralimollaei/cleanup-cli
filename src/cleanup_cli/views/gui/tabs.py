@@ -28,16 +28,18 @@ from cleanup_cli.models.image.webp import (
     WebPSkip,
 )
 from cleanup_cli.models.validation import validate_inclusive_range
-from cleanup_cli.views.gui.application import (
-    ControllerGtkTab,
-    OptionalNumberControl,
+from cleanup_cli.views.gui.controller_tab import ControllerGtkTab
+from cleanup_cli.views.gui.dialogs import (
     choose_folder,
     confirm_destructive_action,
+)
+from cleanup_cli.views.gui.results import ResultRow
+from cleanup_cli.views.gui.widgets import (
+    OptionalNumberControl,
     result_row,
     setting_row,
     settings_group,
 )
-from cleanup_cli.views.gui.results import ResultRow
 
 
 def _directory_path(directory: str | Path) -> Path:

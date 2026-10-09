@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from itertools import chain
 from pathlib import Path
 from typing import TextIO
 
@@ -12,10 +13,10 @@ from cleanup_cli.models.image.webp import (
     WebPDirectoryConversionResult,
     WebPOptions,
     WebPResult,
-    WebPSkip,
 )
-from cleanup_cli.views.commands.arguments import positive_int
+from cleanup_cli.views.commands.arguments import add_resource_arguments
 from cleanup_cli.views.commands.progress import CliProgress
+from cleanup_cli.views.commands.reporting import ResultReporter
 
 
 class WebPCommand:
@@ -52,23 +53,7 @@ class WebPCommand:
             action="store_true",
             help="replace originals; without this flag, only validate a dry run",
         )
-        parser.add_argument(
-            "--max-workers",
-            type=positive_int,
-            default=None,
-            metavar="N",
-            help="maximum number of worker threads (default: executor default)",
-        )
-        parser.add_argument(
-            "--memory-limit-mb",
-            type=positive_int,
-            default=None,
-            metavar="MiB",
-            help=(
-                "maximum estimated memory for concurrent conversions "
-                "(default: auto)"
-            ),
-        )
+        add_resource_arguments(parser, activity="conversions")
         parser.set_defaults(command_handler=self, command_parser=parser)
 
     def execute(
@@ -76,17 +61,15 @@ class WebPCommand:
     ) -> None:
         """Build the request, invoke the controller, and render its result."""
 
-        reported: set[tuple[str, Path]] = set()
         progress = CliProgress(output=self._output)
+        reporter = ResultReporter[WebPResult](
+            key=lambda item: (
+                type(item),
+                item.source if isinstance(item, WebPConversion) else item.path,
+            ),
+            render=lambda item: progress.write(self._result_message(item)),
+        )
         try:
-            def on_result(item: WebPResult) -> None:
-                if isinstance(item, WebPConversion):
-                    reported.add(("conversion", item.source))
-                    self._print_conversion(item, progress=progress)
-                elif isinstance(item, WebPSkip):
-                    reported.add(("skip", item.path))
-                    self._print_skip(item, progress=progress)
-
             result = self._controller.execute(
                 WebPConversionRequest(
                     args.directory,
@@ -96,7 +79,7 @@ class WebPCommand:
                         max_workers=args.max_workers,
                         memory_limit_mb=args.memory_limit_mb,
                     ),
-                    on_result=on_result,
+                    on_result=reporter,
                     on_progress=progress,
                 )
             )
@@ -105,37 +88,18 @@ class WebPCommand:
         finally:
             progress.close()
 
-        for conversion in result.conversions:
-            if ("conversion", conversion.source) not in reported:
-                self._print_conversion(conversion)
-        for skip in result.skips:
-            if ("skip", skip.path) not in reported:
-                self._print_skip(skip)
-        self._print(
+        reporter.complete(chain(result.conversions, result.skips))
+        progress.write(
             f"{len(result.conversions)} image(s) converted, "
             f"{len(result.skips)} image(s) skipped"
         )
-        self._print(f"total space saved: {result.total_saved_bytes} bytes")
+        progress.write(f"total space saved: {result.total_saved_bytes} bytes")
 
-    def _print_conversion(
-        self,
-        conversion: WebPConversion,
-        *,
-        progress: CliProgress | None = None,
-    ) -> None:
-        self._print(
-            f"converted: {conversion.source} -> {conversion.destination} "
-            f"(saved {conversion.saved_bytes} bytes)",
-            progress=progress,
-        )
-
-    def _print_skip(
-        self, skip: WebPSkip, *, progress: CliProgress | None = None
-    ) -> None:
-        self._print(f"skipped: {skip.path} ({skip.reason})", progress=progress)
-
-    def _print(self, message: str, *, progress: CliProgress | None = None) -> None:
-        if progress is None:
-            print(message, file=self._output, flush=True)
-        else:
-            progress.write(message)
+    @staticmethod
+    def _result_message(item: WebPResult) -> str:
+        if isinstance(item, WebPConversion):
+            return (
+                f"converted: {item.source} -> {item.destination} "
+                f"(saved {item.saved_bytes} bytes)"
+            )
+        return f"skipped: {item.path} ({item.reason})"

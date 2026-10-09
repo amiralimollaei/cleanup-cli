@@ -12,8 +12,9 @@ from cleanup_cli.controllers.core import (
     DeduplicationResult,
 )
 from cleanup_cli.models.deduplication import DeduplicationOptions, Duplicate
-from cleanup_cli.views.commands.arguments import positive_int
+from cleanup_cli.views.commands.arguments import add_resource_arguments
 from cleanup_cli.views.commands.progress import CliProgress
+from cleanup_cli.views.commands.reporting import ResultReporter
 
 
 class DeduplicateCommand:
@@ -50,26 +51,7 @@ class DeduplicateCommand:
             action="store_true",
             help="delete duplicates; without this flag, only show a dry run",
         )
-        parser.add_argument(
-            "--max-workers",
-            type=positive_int,
-            default=None,
-            metavar="N",
-            help=(
-                "maximum number of worker threads for image hashing "
-                "(default: executor default)"
-            ),
-        )
-        parser.add_argument(
-            "--memory-limit-mb",
-            type=positive_int,
-            default=None,
-            metavar="MiB",
-            help=(
-                "maximum estimated memory for concurrent image hashing "
-                "(default: auto)"
-            ),
-        )
+        add_resource_arguments(parser, activity="image hashing")
         parser.set_defaults(command_handler=self, command_parser=parser)
 
     def execute(
@@ -77,14 +59,14 @@ class DeduplicateCommand:
     ) -> None:
         """Build the request, invoke the controller, and render its result."""
 
-        reported: set[Path] = set()
         progress = CliProgress(output=self._output)
+        reporter = ResultReporter[Duplicate](
+            key=lambda duplicate: duplicate.removed,
+            render=lambda duplicate: progress.write(
+                self._duplicate_message(duplicate, deleted=args.delete)
+            ),
+        )
         try:
-            def on_result(duplicate: Duplicate) -> None:
-                reported.add(duplicate.removed)
-                action = "deleted" if args.delete else "would delete"
-                self._print_duplicate(action, duplicate, progress=progress)
-
             result = self._controller.execute(
                 DeduplicationRequest(
                     args.directory,
@@ -94,7 +76,7 @@ class DeduplicateCommand:
                         max_workers=args.max_workers,
                         memory_limit_mb=args.memory_limit_mb,
                     ),
-                    on_result=on_result,
+                    on_result=reporter,
                     on_progress=progress,
                 )
             )
@@ -103,34 +85,29 @@ class DeduplicateCommand:
         finally:
             progress.close()
 
-        action = "deleted" if result.deleted else "would delete"
-        for duplicate in result.duplicates:
-            if duplicate.removed not in reported:
-                self._print_duplicate(action, duplicate)
+        reporter.complete(
+            result.duplicates,
+            render=lambda duplicate: progress.write(
+                self._duplicate_message(duplicate, deleted=result.deleted)
+            ),
+        )
         status = "deleted" if result.deleted else "found"
-        self._print(f"{len(result.duplicates)} duplicate(s) {status}")
+        progress.write(f"{len(result.duplicates)} duplicate(s) {status}")
         savings = "saved" if result.deleted else "that would be saved"
-        self._print(
+        progress.write(
             f"total space {savings}: {result.total_saved_bytes} bytes"
         )
 
-    def _print_duplicate(
-        self,
-        action: str,
+    @staticmethod
+    def _duplicate_message(
         duplicate: Duplicate,
         *,
-        progress: CliProgress | None = None,
-    ) -> None:
-        savings = "saved" if action == "deleted" else "would save"
-        self._print(
+        deleted: bool,
+    ) -> str:
+        action = "deleted" if deleted else "would delete"
+        savings = "saved" if deleted else "would save"
+        return (
             f"{action}: {duplicate.removed} "
             f"(keeping {duplicate.kept}, distance {duplicate.distance}, "
-            f"{savings} {duplicate.saved_bytes} bytes)",
-            progress=progress,
+            f"{savings} {duplicate.saved_bytes} bytes)"
         )
-
-    def _print(self, message: str, *, progress: CliProgress | None = None) -> None:
-        if progress is None:
-            print(message, file=self._output, flush=True)
-        else:
-            progress.write(message)

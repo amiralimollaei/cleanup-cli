@@ -310,6 +310,60 @@ def test_cli_renders_streamed_webp_result_before_controller_returns() -> None:
     assert output.getvalue().count("converted: early.png") == 1
 
 
+def test_cli_renders_duplicates_missing_from_a_partial_stream() -> None:
+    early = Duplicate(Path("early.jpg"), Path("kept.jpg"), 0)
+    late = Duplicate(Path("late.jpg"), Path("kept.jpg"), 0)
+    output = StringIO()
+
+    class PartialController(Controller[DeduplicationRequest, DeduplicationResult]):
+        def execute(self, request: DeduplicationRequest) -> DeduplicationResult:
+            assert request.on_result is not None
+            request.on_result(early)
+            assert "deleted: early.jpg" in output.getvalue()
+            assert "late.jpg" not in output.getvalue()
+            return DeduplicationResult((early, late), deleted=True)
+
+    view = ArgparseCliView(DeduplicateCommand(PartialController(), output=output))
+
+    assert view.run(["deduplicate", "/photos", "--delete"]) == 0
+    assert output.getvalue().splitlines() == [
+        "deleted: early.jpg (keeping kept.jpg, distance 0, saved 0 bytes)",
+        "deleted: late.jpg (keeping kept.jpg, distance 0, saved 0 bytes)",
+        "2 duplicate(s) deleted",
+        "total space saved: 0 bytes",
+    ]
+
+
+def test_cli_renders_conversions_and_skips_missing_from_a_partial_stream() -> None:
+    early = WebPSkip(Path("early.png"), "already optimized")
+    conversion = WebPConversion(Path("late.png"), Path("late.webp"), 100, 40)
+    late_skip = WebPSkip(Path("other.png"), "destination exists")
+    output = StringIO()
+
+    class PartialController(
+        Controller[WebPConversionRequest, WebPDirectoryConversionResult]
+    ):
+        def execute(
+            self, request: WebPConversionRequest
+        ) -> WebPDirectoryConversionResult:
+            assert request.on_result is not None
+            request.on_result(early)
+            assert "skipped: early.png" in output.getvalue()
+            assert "late.png" not in output.getvalue()
+            return WebPDirectoryConversionResult((conversion,), (early, late_skip))
+
+    view = ArgparseCliView(WebPCommand(PartialController(), output=output))
+
+    assert view.run(["webp", "/photos", "--replace"]) == 0
+    assert output.getvalue().splitlines() == [
+        "skipped: early.png (already optimized)",
+        "converted: late.png -> late.webp (saved 60 bytes)",
+        "skipped: other.png (destination exists)",
+        "1 image(s) converted, 2 image(s) skipped",
+        "total space saved: 60 bytes",
+    ]
+
+
 @pytest.mark.parametrize(
     ("command", "arguments", "expected_log"),
     [
@@ -349,7 +403,11 @@ def test_cli_routes_streamed_logs_through_active_pbar_write(
     assert all(file is output for _, file in bars[0].writes)
 
 
-def test_cli_view_rejects_non_positive_webp_worker_count() -> None:
+@pytest.mark.parametrize("command", ["deduplicate", "webp"])
+@pytest.mark.parametrize("option", ["--max-workers", "--memory-limit-mb"])
+def test_cli_view_rejects_non_positive_resource_limits(
+    command: str, option: str
+) -> None:
     duplicate_controller = RecordingController(DeduplicationResult((), False))
     webp_controller = RecordingController(WebPDirectoryConversionResult((), ()))
     view = ArgparseCliView(
@@ -359,33 +417,10 @@ def test_cli_view_rejects_non_positive_webp_worker_count() -> None:
     )
 
     with pytest.raises(SystemExit):
-        view.run(["webp", "/photos", "--max-workers", "0"])
+        view.run([command, "/photos", option, "0"])
 
-
-def test_cli_view_rejects_non_positive_webp_memory_limit() -> None:
-    duplicate_controller = RecordingController(DeduplicationResult((), False))
-    webp_controller = RecordingController(WebPDirectoryConversionResult((), ()))
-    view = ArgparseCliView(
-        DeduplicateCommand(duplicate_controller),
-        WebPCommand(webp_controller),
-        output=StringIO(),
-    )
-
-    with pytest.raises(SystemExit):
-        view.run(["webp", "/photos", "--memory-limit-mb", "0"])
-
-
-def test_cli_view_rejects_non_positive_deduplication_memory_limit() -> None:
-    duplicate_controller = RecordingController(DeduplicationResult((), False))
-    webp_controller = RecordingController(WebPDirectoryConversionResult((), ()))
-    view = ArgparseCliView(
-        DeduplicateCommand(duplicate_controller),
-        WebPCommand(webp_controller),
-        output=StringIO(),
-    )
-
-    with pytest.raises(SystemExit):
-        view.run(["deduplicate", "/photos", "--memory-limit-mb", "0"])
+    assert duplicate_controller.requests == []
+    assert webp_controller.requests == []
 
 
 def test_cli_view_rejects_commandless_directory_input() -> None:
