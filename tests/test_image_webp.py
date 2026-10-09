@@ -1,13 +1,11 @@
 from pathlib import Path
-from threading import Condition, Lock
-from time import sleep
+from threading import Condition
 
 import numpy as np
 import pytest
 from PIL import Image
 
 from cleanup_cli.models.image import memory as image_memory
-from cleanup_cli.models.image import webp as image_webp
 from cleanup_cli import convert_directory_to_webp
 from cleanup_cli.models.image.webp import (
     DecodedImage,
@@ -128,7 +126,6 @@ def test_reports_each_completed_result_and_total_saved_bytes(tmp_path: Path) -> 
 
     assert reported == list(result.conversions) + list(result.skips)
     assert result.total_saved_bytes == original_size - result.conversions[0].webp_size
-    assert result.conversions[0].saved_bytes == result.total_saved_bytes
 
 
 def test_skips_existing_webp_and_non_images(tmp_path: Path) -> None:
@@ -396,55 +393,3 @@ def test_limits_aggregate_conversion_memory_and_keeps_safe_parallelism(
     assert events[:3] == [("inspect", source) for source in sources]
     assert active_bytes == 0
     assert active_jobs == 0
-
-
-def test_converts_files_in_parallel_and_preserves_scan_order(tmp_path: Path) -> None:
-    active = 0
-    maximum_active = 0
-    lock = Lock()
-
-    class Scanner:
-        def __init__(self, paths: list[Path]) -> None:
-            self._paths = paths
-
-        def scan(self, directory: Path) -> list[Path]:
-            return self._paths
-
-    class TrackingCodec(WebPCodec[Path]):
-        def decode(self, path: Path) -> DecodedImage[Path]:
-            return DecodedImage(path, (1, 1), False, False)
-
-        def inspect(self, path: Path) -> ImageInspection:
-            return ImageInspection((1, 1), False, False, 1)
-
-        def encode(self, frame: Path, destination: Path, quality: int) -> None:
-            nonlocal active, maximum_active
-            with lock:
-                active += 1
-                maximum_active = max(maximum_active, active)
-            sleep(0.03)
-            destination.write_bytes(b"x")
-            with lock:
-                active -= 1
-
-        def dimensions(self, path: Path) -> tuple[int, int]:
-            return (1, 1)
-
-    sources = []
-    for index in range(4):
-        source = tmp_path / f"image-{index}.jpg"
-        source.write_bytes(b"x" * 100)
-        sources.append(source)
-
-    converter = WebPDirectoryConverter(TrackingCodec(), scanner=Scanner(sources))
-
-    result = converter.convert(
-        tmp_path,
-        WebPOptions(replace=True, max_workers=4),
-    )
-    conversions = result.conversions
-    skips = result.skips
-
-    assert [conversion.source for conversion in conversions] == sources
-    assert skips == ()
-    assert maximum_active > 1

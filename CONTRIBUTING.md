@@ -48,8 +48,7 @@ git diff --check
 
 GTK widget tests need a working display. On a desktop, run them in a session
 where GTK can open a window. Without a display, those tests are skipped, so a
-passing run with skips does not establish GUI coverage. Install the GNOME
-desktop settings schemas and an icon theme to exercise theme and icon checks.
+passing run with skips does not establish GUI coverage.
 
 For a headless Linux run, install Xvfb, `xvfb-run`, `xauth`, and
 `dbus-run-session`. The release workflow uses this command on Ubuntu 24.04:
@@ -74,8 +73,12 @@ describe any intentional changes to deletion, replacement, or result ordering.
 
 In a pull request, explain the problem, the resulting behavior, and the checks
 you ran. Mention GUI or platform behavior that remains unverified. Add a
-regression test when it demonstrates a bug or an observable contract; existing
-tests are often sufficient for a refactor that preserves behavior.
+regression test when it protects behavior a change can break: image matching,
+file retention, dry runs, safe deletion and replacement, resource limits,
+result delivery, or GUI responsiveness and shutdown. Prefer realistic scenarios
+over separate checks for trivial helpers, static metadata, icon availability,
+or exact styling values. Existing tests are often sufficient for a refactor
+that preserves behavior; inspect icons, spacing, and themes in the running GUI.
 
 For a bug report, include the package version or commit, operating system,
 Python version, command or GUI settings, expected and observed behavior, and

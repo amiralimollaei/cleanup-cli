@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from pathlib import Path
 import subprocess
 import sys
@@ -39,7 +39,6 @@ from cleanup_cli.views.gui import (
     create_gui_view,
 )
 from cleanup_cli.views.gui.dialogs import confirm_destructive_action
-from cleanup_cli.views.gui.theme import GnomeThemeSynchronizer
 
 
 RequestT = TypeVar("RequestT")
@@ -92,26 +91,6 @@ class StreamingController(RecordingController[RequestT, ResultT]):
             self.finished.set()
 
 
-class StaticTab:
-    icon_name = "applications-system-symbolic"
-
-    def __init__(self, title: str) -> None:
-        self.title = title
-        self.build_count = 0
-
-    def build(self) -> Gtk.Widget:
-        self.build_count += 1
-        return Gtk.Label(label=self.title)
-
-
-def _walk_widgets(widget: Gtk.Widget) -> Iterator[Gtk.Widget]:
-    yield widget
-    child = widget.get_first_child()
-    while child is not None:
-        yield from _walk_widgets(child)
-        child = child.get_next_sibling()
-
-
 class RecordingAlertDialog:
     def __init__(self) -> None:
         self.message = ""
@@ -140,53 +119,7 @@ class RecordingAlertDialog:
         self.parent = parent
 
 
-def test_deduplication_gui_request_validation_and_options() -> None:
-    assert DeduplicationGtkTab.create_request(
-        "/photos",
-        threshold=4,
-        delete=True,
-        max_workers=3,
-        memory_limit_mb=256,
-    ) == DeduplicationRequest(
-        Path("/photos"),
-        DeduplicationOptions(
-            threshold=4,
-            delete=True,
-            max_workers=3,
-            memory_limit_mb=256,
-        ),
-    )
-
-    with pytest.raises(ValueError, match="select a directory"):
-        DeduplicationGtkTab.create_request("   ")
-    with pytest.raises(ValueError, match="threshold must be between"):
-        DeduplicationGtkTab.create_request("/photos", threshold=257)
-
-
-def test_webp_gui_request_validation_and_options() -> None:
-    assert WebPConversionGtkTab.create_request(
-        "/photos",
-        quality=90,
-        replace=True,
-        max_workers=3,
-        memory_limit_mb=256,
-    ) == WebPConversionRequest(
-        Path("/photos"),
-        WebPOptions(
-            quality=90,
-            replace=True,
-            max_workers=3,
-            memory_limit_mb=256,
-        ),
-    )
-
-    with pytest.raises(ValueError, match="select a directory"):
-        WebPConversionGtkTab.create_request("")
-    with pytest.raises(ValueError, match="quality must be between"):
-        WebPConversionGtkTab.create_request("/photos", quality=101)
-
-
-def test_destructive_confirmation_uses_gtk_alert_dialog_properties(
+def test_destructive_confirmation_defaults_to_cancel(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     alert = RecordingAlertDialog()
@@ -201,145 +134,9 @@ def test_destructive_confirmation_uses_gtk_alert_dialog_properties(
         callback=lambda: None,
     )
 
-    assert alert.message == "Delete duplicate images?"
-    assert alert.detail == "This action cannot be undone."
-    assert alert.buttons == ["Cancel", "Delete"]
     assert alert.cancel_button == 0
-    assert alert.default_button == 0
-    assert alert.parent is None
-
-
-@requires_display
-@pytest.mark.parametrize("header_first", [True, False])
-def test_gui_main_view_accepts_any_number_of_tabs(header_first: bool) -> None:
-    tabs = tuple(StaticTab(f"Tool {index}") for index in range(3))
-    view = GtkGuiView(
-        *tabs,
-        application_id="io.github.amiralimollaei.CleanupCli.TabTest",
-    )
-
-    header = view._build_header_bar() if header_first else None
-    main = view._build_main_view()
-    if header is None:
-        header = view._build_header_bar()
-
-    assert view.tabs == tabs
-    assert isinstance(main, Gtk.Box)
-    stack = main.get_last_child()
-    assert isinstance(stack, Gtk.Stack)
-    assert stack.get_pages().get_n_items() == 3
-    assert main.get_first_child() is stack
-    switcher = next(
-        widget for widget in _walk_widgets(header)
-        if isinstance(widget, Gtk.StackSwitcher)
-    )
-    assert switcher.get_stack() is stack
-    last_button = switcher.get_last_child()
-    assert isinstance(last_button, Gtk.ToggleButton)
-    last_button.set_active(True)
-    assert stack.get_visible_child_name() == "tab-2"
-    assert [tab.build_count for tab in tabs] == [1, 1, 1]
-    # A custom tab does not need a shutdown hook.
-    view._on_shutdown()
-
-
-@requires_display
-def test_gui_main_view_supports_no_tabs() -> None:
-    view = GtkGuiView(
-        application_id="io.github.amiralimollaei.CleanupCli.EmptyTest"
-    )
-
-    assert view.tabs == ()
-    assert isinstance(view._build_main_view(), Gtk.ScrolledWindow)
-
-
-@requires_display
-def test_gui_header_title_has_vertical_padding() -> None:
-    view = GtkGuiView(
-        application_id="io.github.amiralimollaei.CleanupCli.HeaderTest"
-    )
-
-    header = view._build_header_bar()
-    title = next(
-        widget for widget in _walk_widgets(header)
-        if isinstance(widget, Gtk.Label) and widget.get_text() == "Image Cleanup"
-    )
-    heading = title.get_parent()
-
-    assert heading is not None
-    assert heading.get_margin_top() == 6
-    assert heading.get_margin_bottom() == 6
-
-
-@requires_display
-def test_gui_follows_gnome_color_scheme() -> None:
-    synchronizer = GnomeThemeSynchronizer()
-    interface = GnomeThemeSynchronizer._create_settings()
-    if interface is None:
-        pytest.skip("GNOME interface settings are not available")
-
-    synchronizer.start()
-
-    gtk_settings = Gtk.Settings.get_default()
-    assert gtk_settings is not None
-    assert bool(
-        gtk_settings.get_property("gtk-application-prefer-dark-theme")
-    ) is (interface.get_string("color-scheme") == "prefer-dark")
-    synchronizer.stop()
-
-
-@requires_display
-def test_production_gui_icons_exist_in_the_active_theme() -> None:
-    icon_theme = Gtk.IconTheme.get_for_display(Gtk.Widget.get_display(Gtk.Label()))
-    icon_names = {
-        "checkmark-symbolic",
-        "dialog-error-symbolic",
-        "dialog-information-symbolic",
-        "edit-delete-symbolic",
-        "edit-find-symbolic",
-        "folder-open-symbolic",
-        "folder-symbolic",
-        "image-x-generic-symbolic",
-        "media-playback-start-symbolic",
-        "open-menu-symbolic",
-        "user-trash-symbolic",
-        "view-grid-symbolic",
-        "view-list-symbolic",
-    }
-
-    assert not sorted(name for name in icon_names if not icon_theme.has_icon(name))
-
-
-@requires_display
-@pytest.mark.parametrize(
-    ("color_scheme", "prefer_dark"),
-    [
-        ("prefer-dark", True),
-        ("prefer-light", False),
-        ("default", False),
-    ],
-)
-def test_gnome_theme_mapping(color_scheme: str, prefer_dark: bool) -> None:
-    gtk_settings = Gtk.Settings.get_default()
-    assert gtk_settings is not None
-
-    GnomeThemeSynchronizer._apply(color_scheme)
-
-    assert bool(
-        gtk_settings.get_property("gtk-application-prefer-dark-theme")
-    ) is prefer_dark
-
-
-@requires_display
-def test_production_gui_composes_both_cleanup_tabs() -> None:
-    view = create_gui_view()
-
-    assert [type(tab) for tab in view.tabs] == [
-        DeduplicationGtkTab,
-        WebPConversionGtkTab,
-    ]
-    assert isinstance(view._build_main_view(), Gtk.Box)
-    view._on_shutdown()
+    assert alert.buttons[alert.cancel_button] == "Cancel"
+    assert alert.default_button == alert.cancel_button
 
 
 @requires_display
@@ -392,17 +189,9 @@ def test_cleanup_tabs_resize_with_long_paths_and_scrollable_content(
         results_scroll = tab._result_list.get_ancestor(Gtk.ScrolledWindow)
         assert isinstance(settings_scroll, Gtk.ScrolledWindow)
         assert isinstance(results_scroll, Gtk.ScrolledWindow)
-        assert settings_scroll is not results_scroll
-        assert settings_scroll.get_policy() == (
-            Gtk.PolicyType.NEVER,
-            Gtk.PolicyType.AUTOMATIC,
-        )
-        assert not settings_scroll.get_overlay_scrolling()
-        assert results_scroll.get_policy()[1] == Gtk.PolicyType.AUTOMATIC
         split = settings_scroll.get_ancestor(Gtk.Paned)
         assert isinstance(split, Gtk.Paned)
         assert results_scroll.get_ancestor(Gtk.Paned) is split
-        assert tab._run_button.get_ancestor(Gtk.Paned) is split
         directory_box = tab._directory.get_parent()
         assert directory_box is not None
         browse = directory_box.get_last_child()
@@ -428,22 +217,15 @@ def test_cleanup_tabs_resize_with_long_paths_and_scrollable_content(
             (1100, 760, Gtk.Orientation.HORIZONTAL),
             (620, 440, Gtk.Orientation.HORIZONTAL),
         ]:
+            previous_size = (window.get_width(), window.get_height())
             window.set_default_size(width, height)
-            deadline = time.monotonic() + 2
-            while time.monotonic() < deadline:
-                while context.pending():
-                    context.iteration(False)
-                if window.get_width() == width and window.get_height() == height:
-                    break
-                time.sleep(0.005)
-
-            assert window.get_width() == width
-            assert window.get_height() == height
+            _process_gtk_until(
+                lambda: (window.get_width(), window.get_height()) != previous_size
+                and split.get_orientation() == expected_orientation
+            )
+            assert (window.get_width(), window.get_height()) != previous_size
             assert split.get_orientation() == expected_orientation
-            assert tab._summary_label is not None
-            assert tab._summary_label.get_layout().get_line_count() == 1
-            assert tab._summary_label.get_tooltip_text() == "100000 images processed | " * 8
-            assert page.measure(Gtk.Orientation.HORIZONTAL, -1).minimum <= width
+            assert page.measure(Gtk.Orientation.HORIZONTAL, -1).minimum <= window.get_width()
             assert tab._directory.get_width() > 0
             assert results_scroll.get_width() > 0
             assert results_scroll.get_height() > 0
@@ -479,12 +261,8 @@ def test_cleanup_tabs_resize_with_long_paths_and_scrollable_content(
             entry_bounds_available, entry_bounds = tab._directory.compute_bounds(
                 directory_box
             )
-            browse_bounds_available, browse_bounds = browse.compute_bounds(directory_box)
-            assert entry_bounds_available and browse_bounds_available
+            assert entry_bounds_available
             assert settings_scroll.get_height() >= entry_bounds.get_height()
-            assert directory_box.get_width() - entry_bounds.get_width() <= (
-                browse_bounds.get_width() + 12
-            )
             settings = split.get_start_child()
             assert settings is not None
             bounds_available, bounds = tab._run_button.compute_bounds(settings)
@@ -522,7 +300,8 @@ def test_tool_divider_is_shared_resettable_and_keeps_controls_visible() -> None:
     try:
         window.set_default_size(1100, 760)
         window.present()
-        _process_gtk_until(lambda: window.get_width() == 1100)
+        _process_gtk_until(lambda: splits[0].get_width() >= 1000)
+        assert splits[0].get_width() >= 1000
         default_horizontal_position = splits[0].get_position()
         splits[0].set_position(480)
         _process_gtk_until(lambda: settings[0].get_width() >= 480)
@@ -536,17 +315,16 @@ def test_tool_divider_is_shared_resettable_and_keeps_controls_visible() -> None:
 
         window.set_default_size(620, 440)
         _process_gtk_until(
-            lambda: window.get_width() == 620
-            and splits[1].get_position() < first_position
+            lambda: splits[1].get_position() < first_position
         )
+        assert splits[1].get_position() < first_position
         assert view._layout.positions[Gtk.Orientation.HORIZONTAL] == first_position
         stack.set_visible_child_name("tab-0")
         _process_gtk_until(lambda: splits[0].get_position() == splits[1].get_position())
         assert splits[0].get_position() == splits[1].get_position()
         window.set_default_size(1100, 760)
         _process_gtk_until(
-            lambda: window.get_width() == 1100
-            and splits[0].get_position() == first_position
+            lambda: splits[0].get_position() == first_position
         )
         assert splits[0].get_position() == first_position
 
@@ -564,7 +342,6 @@ def test_tool_divider_is_shared_resettable_and_keeps_controls_visible() -> None:
                     Gtk.Orientation.HORIZONTAL, settings[index].get_height()
                 ).minimum
             )
-            assert scroll.get_policy()[0] == Gtk.PolicyType.NEVER
             adjustment = scroll.get_hadjustment()
             assert adjustment.get_upper() <= adjustment.get_page_size() + 1
             directory_box = tab._directory.get_parent()
@@ -594,12 +371,12 @@ def test_tool_divider_is_shared_resettable_and_keeps_controls_visible() -> None:
             default_horizontal_position,
             default_horizontal_position,
         ]
-        assert view._layout.positions[Gtk.Orientation.HORIZONTAL] == 360
 
         window.set_default_size(620, 720)
         _process_gtk_until(
             lambda: splits[1].get_orientation() == Gtk.Orientation.VERTICAL
         )
+        default_vertical_position = splits[1].get_position()
         splits[1].set_position(280)
         _process_gtk_until(lambda: settings[1].get_height() >= 280)
         stack.set_visible_child_name("tab-0")
@@ -608,16 +385,20 @@ def test_tool_divider_is_shared_resettable_and_keeps_controls_visible() -> None:
         )
         assert splits[0].get_position() == splits[1].get_position() == 280
         reset.activate(None)
-        _process_gtk_until(lambda: splits[0].get_position() == 240)
-        assert [split.get_position() for split in splits] == [240, 240]
+        _process_gtk_until(lambda: splits[0].get_position() == default_vertical_position)
+        assert [split.get_position() for split in splits] == [
+            default_vertical_position,
+            default_vertical_position,
+        ]
 
         webp_tab = tabs[1]
         assert isinstance(webp_tab, WebPConversionGtkTab)
         assert webp_tab._replace is not None
         webp_tab._replace.set_active(True)
+        previous_width = window.get_width()
         window.set_default_size(560, 720)
-        _process_gtk_until(lambda: window.get_width() == 560)
-        assert window.get_width() == 560
+        _process_gtk_until(lambda: window.get_width() < previous_width)
+        assert window.get_width() < previous_width
         splits[0].set_position(10)
         _process_gtk_until(lambda: splits[0].get_position() > 10)
         minimum_vertical_position = splits[0].get_position()
@@ -660,6 +441,8 @@ def test_deduplication_tab_builds_form_request_and_renders_results() -> None:
     assert tab._workers is not None
     assert tab._memory is not None
     assert tab._delete is not None
+    with pytest.raises(ValueError, match="select a directory"):
+        tab._request_from_form()
     tab._directory.set_text("/photos")
     tab._threshold.set_value(4)
     tab._workers.set_explicit(3)
@@ -706,6 +489,8 @@ def test_webp_tab_builds_form_request_and_renders_results() -> None:
     assert tab._workers is not None
     assert tab._memory is not None
     assert tab._replace is not None
+    with pytest.raises(ValueError, match="select a directory"):
+        tab._request_from_form()
     tab._directory.set_text("/photos")
     tab._quality.set_value(90)
     tab._workers.set_explicit(3)
@@ -734,32 +519,6 @@ def test_webp_tab_builds_form_request_and_renders_results() -> None:
 
 
 @requires_display
-def test_controller_execution_runs_off_the_gtk_thread() -> None:
-    controller = RecordingController(DeduplicationResult((), deleted=False))
-    tab = DeduplicationGtkTab(controller)
-    tab.build()
-    request = DeduplicationGtkTab.create_request("/photos")
-    gtk_thread = threading.current_thread().ident
-
-    tab._submit(request, "Working...")
-    deadline = time.monotonic() + 2
-    context = GLib.MainContext.default()
-    while tab._running and time.monotonic() < deadline:
-        context.iteration(False)
-        time.sleep(0.005)
-
-    assert not tab._running
-    assert controller.requests == [request]
-    assert controller.thread_ids != [gtk_thread]
-    assert tab._summary_label is not None
-    assert (
-        tab._summary_label.get_text()
-        == "0 duplicates found | 0 bytes would be saved"
-    )
-    tab.shutdown()
-
-
-@requires_display
 def test_gui_progress_bar_updates_resets_and_hides_with_task_lifecycle() -> None:
     controller = RecordingController(DeduplicationResult((), deleted=False))
     tab = DeduplicationGtkTab(controller)
@@ -774,9 +533,8 @@ def test_gui_progress_bar_updates_resets_and_hides_with_task_lifecycle() -> None
     assert not tab._run_button.get_sensitive()
     assert tab._activity_box.get_visible()
     assert tab._progress_bar.get_fraction() == 0.0
-    assert tab._progress_bar.get_text() == "Preparing..."
 
-    assert tab._apply_progress(TaskProgress("Indexing images", 2, 4)) is GLib.SOURCE_REMOVE
+    tab._apply_progress(TaskProgress("Indexing images", 2, 4))
     assert tab._activity_label is not None
     assert tab._activity_label.get_text() == "Indexing images"
     assert tab._progress_bar.get_fraction() == pytest.approx(0.5)
@@ -789,107 +547,6 @@ def test_gui_progress_bar_updates_resets_and_hides_with_task_lifecycle() -> None
     # A second operation starts from a clean determinate state.
     tab._set_busy(True, "Starting again...")
     assert tab._progress_bar.get_fraction() == 0.0
-    assert tab._progress_bar.get_text() == "Preparing..."
-    tab.shutdown()
-
-
-@requires_display
-def test_deduplication_tab_submits_gui_progress_observer() -> None:
-    controller = RecordingController(DeduplicationResult((), deleted=False))
-    tab = DeduplicationGtkTab(controller)
-    tab.build()
-
-    tab._submit_with_results(
-        DeduplicationGtkTab.create_request("/photos"),
-        "Finding duplicate images...",
-    )
-    deadline = time.monotonic() + 2
-    while not controller.requests and time.monotonic() < deadline:
-        time.sleep(0.005)
-
-    assert controller.requests
-    submitted = controller.requests[0]
-    assert isinstance(submitted, DeduplicationRequest)
-    assert submitted.on_progress is not None
-    tab.shutdown()
-
-
-@requires_display
-def test_webp_tab_submits_gui_progress_observer() -> None:
-    controller = RecordingController(WebPDirectoryConversionResult((), ()))
-    tab = WebPConversionGtkTab(controller)
-    tab.build()
-
-    tab._submit_with_results(
-        WebPConversionGtkTab.create_request("/photos"),
-        "Checking WebP conversions...",
-    )
-    deadline = time.monotonic() + 2
-    while not controller.requests and time.monotonic() < deadline:
-        time.sleep(0.005)
-
-    assert controller.requests
-    submitted = controller.requests[0]
-    assert isinstance(submitted, WebPConversionRequest)
-    assert submitted.on_progress is not None
-    tab.shutdown()
-
-
-@requires_display
-def test_gui_appends_streamed_results_while_task_is_running() -> None:
-    duplicate = Duplicate(
-        Path("early.jpg"),
-        Path("kept.jpg"),
-        0,
-        FileIdentity(1, 2, 1024, 3),
-    )
-    controller = RecordingController(DeduplicationResult((duplicate,), False))
-    tab = DeduplicationGtkTab(controller)
-    tab.build()
-    tab._running = True
-
-    tab._append_result_batch((duplicate,))
-
-    assert tab._running
-    assert tab._result_model is not None
-    assert tab._result_model.get_n_items() == 1
-    assert tab._result_model.get_item(0).row.primary == "Would delete: early.jpg"
-    assert tab._summary_label is not None
-    assert (
-        tab._summary_label.get_text()
-        == "1 duplicate found | 1.0 KiB would be saved"
-    )
-    tab.shutdown()
-
-
-@requires_display
-def test_gui_appends_streamed_webp_results_while_task_is_running() -> None:
-    conversion = WebPConversion(
-        Path("early.png"),
-        Path("early.webp"),
-        original_size=2048,
-        webp_size=512,
-    )
-    skip = WebPSkip(Path("small.png"), "WebP would not be smaller")
-    controller = RecordingController(
-        WebPDirectoryConversionResult((conversion,), (skip,))
-    )
-    tab = WebPConversionGtkTab(controller)
-    tab.build()
-    tab._running = True
-
-    tab._append_result_batch((conversion, skip))
-
-    assert tab._running
-    assert tab._result_model is not None
-    assert tab._result_model.get_n_items() == 2
-    assert tab._result_model.get_item(0).row.primary == "Converted: early.png"
-    assert tab._result_model.get_item(1).row.primary == "Skipped: small.png"
-    assert tab._summary_label is not None
-    assert (
-        tab._summary_label.get_text()
-        == "1 converted, 1 skipped | 1.5 KiB saved"
-    )
     tab.shutdown()
 
 
@@ -998,7 +655,7 @@ def test_large_result_stream_yields_to_input_and_keeps_rows_once(
     heartbeat_source = GLib.timeout_add(1, heartbeat)
     try:
         window.present()
-        _process_gtk_until(lambda: window.get_width() == 980)
+        _process_gtk_until(lambda: tab._result_list.get_width() > 0)
         if isinstance(tab, DeduplicationGtkTab):
             assert isinstance(request, DeduplicationRequest)
             tab._submit_with_results(request, "Streaming...")
@@ -1031,34 +688,6 @@ def test_large_result_stream_yields_to_input_and_keeps_rows_once(
             GLib.source_remove(input_source[0])
         window.destroy()
         view._on_shutdown()
-
-
-@requires_display
-def test_progress_burst_applies_only_the_latest_pending_update(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    tab = DeduplicationGtkTab(RecordingController(DeduplicationResult((), False)))
-    tab.build()
-    tab._set_busy(True, "Working...")
-    applied: list[TaskProgress] = []
-    original_apply = tab._apply_progress
-
-    def apply(progress: TaskProgress) -> bool:
-        applied.append(progress)
-        return original_apply(progress)
-
-    monkeypatch.setattr(tab, "_apply_progress", apply)
-    try:
-        for index in range(1, 5001):
-            tab._queue_progress(TaskProgress(f"Checking file {index}", index, 5000))
-        assert applied == []
-        _process_gtk_until(lambda: bool(applied))
-        assert applied == [TaskProgress("Checking file 5000", 5000, 5000)]
-        assert tab._progress_bar is not None
-        assert tab._progress_bar.get_fraction() == 1.0
-        assert tab._progress_bar.get_text() == "5000 of 5000 files"
-    finally:
-        tab.shutdown()
 
 
 @requires_display

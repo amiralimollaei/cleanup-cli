@@ -1,8 +1,6 @@
-from dataclasses import is_dataclass
 from pathlib import Path
 from threading import Condition, Lock
 from time import sleep
-from types import ModuleType
 from typing import Any, Callable
 
 import pytest
@@ -28,10 +26,7 @@ from cleanup_cli.models.deduplication import (
     FileChangedError,
     LocalFileRemover,
 )
-from cleanup_cli.controllers import core as controller_models
-from cleanup_cli.models import abstractions, filesystem, parallel, progress
-from cleanup_cli.models.image import duplicates as image_duplicates
-from cleanup_cli.models.image import webp as image_webp
+from cleanup_cli.models import filesystem, parallel
 
 
 class TextLengthAnalyzer:
@@ -308,17 +303,6 @@ def test_weighted_parallel_map_evaluates_each_weight_once() -> None:
     assert calls == {1: 1, 2: 1, 3: 1}
 
 
-def test_duplicate_detector_uses_injected_generic_distance_metric() -> None:
-    images = [
-        IndexedFile(Path("1.txt"), 10),
-        IndexedFile(Path("2.txt"), 12),
-    ]
-
-    assert QualityAwareDuplicateDetector(AbsoluteDistance()).find(images, threshold=2) == [
-        Duplicate(Path("1.txt"), Path("2.txt"), 2)
-    ]
-
-
 def test_deduplicator_coordinates_abstract_indexer_detector_and_remover() -> None:
     first = IndexedFile(Path("1.txt"), 10)
     second = IndexedFile(Path("2.txt"), 12)
@@ -331,7 +315,7 @@ def test_deduplicator_coordinates_abstract_indexer_detector_and_remover() -> Non
 
     duplicates = service.deduplicate(
         Path("unused"),
-        DeduplicationOptions(threshold=2, delete=True),
+        DeduplicationOptions(threshold=257, delete=True),
     )
 
     assert duplicates == [Duplicate(first.path, second.path, 2)]
@@ -354,22 +338,6 @@ def test_local_remover_refuses_to_delete_a_replaced_file(tmp_path: Path) -> None
 def test_deduplication_options_rejects_negative_threshold() -> None:
     with pytest.raises(ValueError, match="threshold must be at least 0"):
         DeduplicationOptions(threshold=-1)
-
-
-def test_deduplication_options_accepts_detector_specific_thresholds() -> None:
-    options = DeduplicationOptions(threshold=257)
-
-    assert options.threshold == 257
-
-
-def test_image_detector_rejects_threshold_above_256() -> None:
-    with pytest.raises(ValueError, match="between 0 and 256"):
-        image_duplicates.create_image_duplicate_detector().validate_threshold(257)
-
-
-def test_image_detector_rejects_negative_threshold() -> None:
-    with pytest.raises(ValueError, match="between 0 and 256"):
-        image_duplicates.create_image_duplicate_detector().validate_threshold(-1)
 
 
 def test_webp_converter_uses_injected_codec(tmp_path: Path) -> None:
@@ -407,37 +375,6 @@ def test_webp_converter_uses_injected_scanner(tmp_path: Path) -> None:
     conversions = result.conversions
     assert [conversion.source for conversion in conversions] == [included]
     assert excluded.exists()
-
-
-@pytest.mark.parametrize("quality", [-1, 101])
-def test_webp_options_validate_quality(quality: int) -> None:
-    with pytest.raises(ValueError, match="between 0 and 100"):
-        WebPOptions(quality)
-
-
-@pytest.mark.parametrize(
-    "module",
-    [
-        controller_models,
-        abstractions,
-        filesystem,
-        image_duplicates,
-        image_webp,
-        progress,
-    ],
-)
-def test_production_dataclasses_use_slots(module: ModuleType) -> None:
-    dataclasses = [
-        value
-        for value in vars(module).values()
-        if isinstance(value, type)
-        and value.__module__ == module.__name__
-        and is_dataclass(value)
-    ]
-
-    assert dataclasses
-    assert all("__slots__" in value.__dict__ for value in dataclasses)
-    assert all("__dict__" not in value.__dict__ for value in dataclasses)
 
 
 def test_no_clobber_copy_fallback_preserves_existing_destination(

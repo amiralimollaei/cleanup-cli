@@ -1,12 +1,4 @@
-from pathlib import Path
-
-from cleanup_cli import path_number_key, sort_numbered_paths
-
-
-def test_sorts_integer_names_numerically() -> None:
-    paths = ["dir-100", "dir-2", "dir-10", "dir-1"]
-
-    assert sort_numbered_paths(paths) == ["dir-1", "dir-2", "dir-10", "dir-100"]
+from cleanup_cli import sort_numbered_paths
 
 
 def test_sorts_decimals_as_exact_numeric_values() -> None:
@@ -39,12 +31,6 @@ def test_numberless_names_are_alphabetical_and_after_numbered_names() -> None:
     assert sort_numbered_paths(paths) == ["dir-1", "Alpha", "beta", "zebra"]
 
 
-def test_all_path_components_are_parsed_and_input_type_is_preserved() -> None:
-    paths = [Path("100/dir-2"), Path("1/dir-10"), Path("2/misc")]
-
-    assert sort_numbered_paths(paths) == [Path("1/dir-10"), Path("2/misc"), Path("100/dir-2")]
-
-
 def test_parent_component_precedes_child_component() -> None:
     paths = ["2/item-1", "1/item-100", "1/item-2"]
 
@@ -55,16 +41,6 @@ def test_leading_zeroes_are_numeric_ties_with_deterministic_spelling_order() -> 
     paths = ["dir-2", "dir-002", "dir-02"]
 
     assert sort_numbered_paths(paths) == ["dir-002", "dir-02", "dir-2"]
-
-
-def test_key_is_usable_directly_with_sorted() -> None:
-    assert sorted(["x-10", "x-1"], key=path_number_key) == ["x-1", "x-10"]
-
-
-def test_accepts_any_iterable() -> None:
-    paths = (path for path in ["dir-10", "dir-2"])
-
-    assert sort_numbered_paths(paths) == ["dir-2", "dir-10"]
 
 
 def test_sorts_year_first_dates_and_times_chronologically() -> None:

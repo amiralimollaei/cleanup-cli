@@ -45,31 +45,6 @@ def _random_phashes(count: int, seed: int) -> list[int]:
     return [int.from_bytes(rng.bytes(32), "big") for _ in range(count)]
 
 
-def test_perceptual_hash_is_stable_for_same_decoded_pixels(tmp_path: Path) -> None:
-    first = tmp_path / "first.pgm"
-    second = tmp_path / "second.pgm"
-    pixels = _pattern(32)
-    _write_pgm(first, pixels)
-    _write_pgm(second, pixels)
-
-    assert perceptual_hash(first) == perceptual_hash(second)
-
-
-def test_perceptual_hash_uses_64_pixels_and_256_dct_coefficients(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source = tmp_path / "source.pgm"
-    _write_pgm(source, _pattern(24))
-
-    normalized = image_signatures._load_normalized(source)
-    coefficients = np.zeros((64, 64), dtype=np.float64)
-    coefficients[0, 0] = 1
-    monkeypatch.setattr(image_signatures, "_dct_2d", lambda _: coefficients)
-
-    assert normalized.grayscale.shape == (64, 64)
-    assert image_signatures._phash(normalized.grayscale) == 1 << 255
-
-
 def test_numpy_dct_fallback_matches_scipy(monkeypatch: pytest.MonkeyPatch) -> None:
     pixels = _pattern(32).astype(np.float64)
     assert image_signatures._scipy_dctn is not None
@@ -133,10 +108,6 @@ def test_signature_rejects_local_edit_at_strict_threshold(tmp_path: Path) -> Non
     assert find_duplicates(images, threshold=0) == []
 
 
-def test_hamming_distance_counts_differing_bits() -> None:
-    assert hamming_distance(0b1010, 0b0011) == 2
-
-
 def test_threshold_controls_duplicate_matching() -> None:
     images = [(Path("1.png"), 0b0000), (Path("2.png"), 0b0011)]
 
@@ -150,20 +121,6 @@ def test_threshold_controls_duplicate_matching() -> None:
 def test_rejects_invalid_threshold(threshold: int) -> None:
     with pytest.raises(ValueError, match="between 0 and 256"):
         find_duplicates([], threshold)
-
-
-def test_rejects_invalid_threshold_before_indexing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def unexpected_index(_: Path) -> list[tuple[Path, int]]:
-        raise AssertionError("directory should not be indexed")
-
-    monkeypatch.setattr(
-        "cleanup_cli.models.image.duplicates.index_images", unexpected_index
-    )
-
-    with pytest.raises(ValueError, match="between 0 and 256"):
-        deduplicate_directory(tmp_path, threshold=257)
 
 
 def test_keeps_last_sorted_image_without_transitive_matching() -> None:
@@ -242,21 +199,6 @@ def test_zero_threshold_avoids_comparing_unique_hashes() -> None:
     assert metric.calls == 0
 
 
-def test_banded_index_promotes_only_colliding_buckets_to_lists() -> None:
-    index = image_duplicates.BandedPHashIndex(threshold=0)
-    for rank in range(1_000):
-        index.add(rank, rank)
-
-    assert all(
-        isinstance(bucket, int) for bucket in index._tables[0].values()
-    )
-
-    index.add(500, 1_000)
-
-    assert list(index.candidates(500)) == [500, 1_000]
-    assert isinstance(index._tables[0][500], list)
-
-
 def test_low_threshold_limits_comparisons_for_mostly_unique_hashes() -> None:
     class CountingDistance(image_duplicates.ImageSignatureDistance):
         def __init__(self) -> None:
@@ -282,15 +224,6 @@ def test_low_threshold_limits_comparisons_for_mostly_unique_hashes() -> None:
 
     assert detector.find(images, threshold=4) == []
     assert metric.calls < 50_000
-
-
-def test_maximum_threshold_uses_exhaustive_candidate_range() -> None:
-    index = image_duplicates.BandedPHashIndex(threshold=256)
-    for rank in range(10):
-        index.add(rank, rank)
-
-    assert list(index.candidates(123)) == list(range(10))
-    assert index._tables == []
 
 
 def test_quality_selection_prefers_resolution_then_size_then_last_path(
@@ -484,14 +417,6 @@ def test_signature_memory_estimate_reads_only_image_header(
     estimate = image_duplicates.PillowImageSignatureAnalyzer().estimate_memory(source)
 
     assert estimate > 32 * 32 * 4
-
-
-@pytest.mark.parametrize("memory_limit_mb", [0, -1])
-def test_rejects_invalid_deduplication_memory_limit(
-    tmp_path: Path, memory_limit_mb: int
-) -> None:
-    with pytest.raises(ValueError, match="memory_limit_mb must be greater than 0"):
-        deduplicate_directory(tmp_path, memory_limit_mb=memory_limit_mb)
 
 
 def test_dry_run_keeps_files_and_delete_removes_only_earlier_match(

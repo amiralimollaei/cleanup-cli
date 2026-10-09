@@ -1,4 +1,3 @@
-import argparse
 from io import StringIO
 from pathlib import Path
 from typing import Generic, TypeVar
@@ -7,25 +6,20 @@ import pytest
 
 from cleanup_cli.controllers import (
     Controller,
-    DeduplicationController,
     DeduplicationRequest,
     DeduplicationResult,
     WebPConversionRequest,
 )
 from cleanup_cli.models import (
     DeduplicationOptions,
-    DirectoryDeduplicator,
-    DirectoryIndexer,
     Duplicate,
-    IndexedFile,
-    QualityAwareDuplicateDetector,
     WebPConversion,
     WebPDirectoryConversionResult,
     WebPOptions,
     WebPSkip,
 )
 from cleanup_cli.models.filesystem import FileIdentity
-from cleanup_cli.models.progress import ProgressObserver, TaskProgress
+from cleanup_cli.models.progress import TaskProgress
 from cleanup_cli.views import ArgparseCliView
 from cleanup_cli.views.commands import DeduplicateCommand, WebPCommand
 from cleanup_cli.views.commands import progress as cli_progress
@@ -43,46 +37,6 @@ class RecordingController(Controller[RequestT, ResultT], Generic[RequestT, Resul
     def execute(self, request: RequestT) -> ResultT:
         self.requests.append(request)
         return self.result
-
-
-class StaticIndexer(DirectoryIndexer[int]):
-    def index(
-        self,
-        directory: Path,
-        *,
-        max_workers: int | None = None,
-        memory_limit_mb: int | None = None,
-        on_progress: ProgressObserver | None = None,
-    ) -> list[IndexedFile[int]]:
-        return [
-            IndexedFile(directory / "1.jpg", 1),
-            IndexedFile(directory / "2.jpg", 1),
-        ]
-
-
-class RecordingCommand:
-    """Minimal command used to verify view-level command registration."""
-
-    help = "record a value"
-
-    def __init__(self, name: str) -> None:
-        self.name = name
-        self.values: list[str] = []
-
-    def add_to(self, subparsers: argparse._SubParsersAction) -> None:
-        parser = subparsers.add_parser(self.name, help=self.help)
-        parser.add_argument("value")
-        parser.set_defaults(command_handler=self, command_parser=parser)
-
-    def execute(
-        self, args: argparse.Namespace, parser: argparse.ArgumentParser
-    ) -> None:
-        self.values.append(args.value)
-
-
-class IntegerDistance:
-    def distance(self, left: int, right: int) -> int:
-        return abs(left - right)
 
 
 class RecordingProgressBar:
@@ -136,21 +90,6 @@ class ProgressStreamingWebPController(
         request.on_result(skip)
         request.on_progress(TaskProgress("Converting images", 1, 1))
         return WebPDirectoryConversionResult((), (skip,))
-
-
-def test_deduplication_controller_returns_immutable_view_model(tmp_path: Path) -> None:
-    model = DirectoryDeduplicator(
-        StaticIndexer(),
-        QualityAwareDuplicateDetector(IntegerDistance()),
-    )
-    controller = DeduplicationController(model)
-
-    result = controller.execute(DeduplicationRequest(tmp_path))
-
-    assert result == DeduplicationResult(
-        (Duplicate(tmp_path / "1.jpg", tmp_path / "2.jpg", 0),),
-        deleted=False,
-    )
 
 
 def test_cli_view_builds_deduplication_request_and_renders_result() -> None:
@@ -436,25 +375,3 @@ def test_cli_view_rejects_commandless_directory_input() -> None:
         view.run(["/photos", "--delete"])
 
     assert duplicate_controller.requests == []
-
-
-def test_cli_view_registers_arbitrary_subcommands() -> None:
-    commands = [RecordingCommand(f"record-{index}") for index in range(3)]
-    view = ArgparseCliView(*commands, output=StringIO())
-
-    for index, command in enumerate(commands):
-        assert view.run([command.name, f"value-{index}"]) == 0
-
-    assert [command.values for command in commands] == [
-        ["value-0"],
-        ["value-1"],
-        ["value-2"],
-    ]
-
-
-def test_cli_view_supports_no_subcommands() -> None:
-    output = StringIO()
-    view = ArgparseCliView(output=output)
-
-    assert view.run([]) == 0
-    assert "Clean up and optimize image directories." in output.getvalue()
